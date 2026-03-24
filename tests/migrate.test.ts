@@ -1,58 +1,40 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, mkdirSync } from 'fs';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, mkdirSync, statSync } from 'fs';
 import { join } from 'path';
-import { tmpdir } from 'os';
+import { tmpdir, homedir } from 'os';
+import { migrate, restore, getSettingsPath } from '../src/migrate.js';
 
-// Stable reference for the fake home directory that mocks can read
-const testEnv = { home: '' };
+/**
+ * SAFETY: All tests pass explicit path overrides via MigratePathOptions.
+ * No mocking of os.homedir() or constants is needed.
+ * Each helper asserts the path is inside the temp directory before writing.
+ */
 
-// Mock os.homedir so getSettingsPath finds our temp settings.json
-vi.mock('os', async (importOriginal) => {
-  const original = await importOriginal<typeof import('os')>();
-  return {
-    ...original,
-    homedir: () => testEnv.home || original.homedir(),
-  };
-});
-
-// Mock constants to use dynamic getters pointing to temp dirs
-vi.mock('../src/constants.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../src/constants.js')>();
-  return {
-    ...original,
-    get CONFIG_DIR() {
-      if (!testEnv.home) return original.CONFIG_DIR;
-      const { join } = require('path');
-      return join(testEnv.home, '.clooks');
-    },
-    get SETTINGS_BACKUP() {
-      if (!testEnv.home) return original.SETTINGS_BACKUP;
-      const { join } = require('path');
-      return join(testEnv.home, '.clooks', 'settings.backup.json');
-    },
-    get MANIFEST_PATH() {
-      if (!testEnv.home) return original.MANIFEST_PATH;
-      const { join } = require('path');
-      return join(testEnv.home, '.clooks', 'manifest.yaml');
-    },
-  };
-});
-
-const { migrate, restore, getSettingsPath } = await import('../src/migrate.js');
+function assertInTmpDir(path: string, tmpDir: string): void {
+  if (!path.startsWith(tmpDir)) {
+    throw new Error(
+      `SAFETY VIOLATION: path "${path}" is not inside temp dir "${tmpDir}". ` +
+      `Refusing to write to real filesystem.`
+    );
+  }
+}
 
 describe('migrate', () => {
   let tmpDir: string;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'clooks-migrate-'));
-    testEnv.home = tmpDir;
     mkdirSync(join(tmpDir, '.claude'), { recursive: true });
     mkdirSync(join(tmpDir, '.clooks'), { recursive: true });
   });
 
   afterEach(() => {
-    testEnv.home = '';
     rmSync(tmpDir, { recursive: true, force: true });
+    // Safety: verify the real settings.json was NOT modified during this test.
+    const realSettings = join(homedir(), '.claude', 'settings.json');
+    // We can't know the original mtime, but we CAN verify no test wrote to it
+    // by checking that none of our temp paths leaked to real paths.
+    // The assertInTmpDir guards above are the primary defense.
   });
 
   function settingsPath() {
@@ -67,10 +49,20 @@ describe('migrate', () => {
     return join(tmpDir, '.clooks', 'manifest.yaml');
   }
 
+  function pathOptions() {
+    return {
+      homeDir: tmpDir,
+      configDir: join(tmpDir, '.clooks'),
+      settingsBackup: backupPath(),
+    };
+  }
+
   it('finds settings.json via getSettingsPath', () => {
-    writeFileSync(settingsPath(), '{}', 'utf-8');
-    const found = getSettingsPath();
-    expect(found).toBe(settingsPath());
+    const sp = settingsPath();
+    assertInTmpDir(sp, tmpDir);
+    writeFileSync(sp, '{}', 'utf-8');
+    const found = getSettingsPath({ homeDir: tmpDir });
+    expect(found).toBe(sp);
   });
 
   it('migrates command hooks to manifest + HTTP hooks', () => {
@@ -94,22 +86,21 @@ describe('migrate', () => {
       },
     };
 
-    writeFileSync(settingsPath(), JSON.stringify(settings), 'utf-8');
+    const sp = settingsPath();
+    assertInTmpDir(sp, tmpDir);
+    writeFileSync(sp, JSON.stringify(settings), 'utf-8');
 
-    const result = migrate();
+    const result = migrate(pathOptions());
 
     expect(result.handlersCreated).toBe(2);
     expect(existsSync(manifestPath())).toBe(true);
     expect(existsSync(backupPath())).toBe(true);
 
     // Check the rewritten settings has HTTP hooks
-    const newSettings = JSON.parse(readFileSync(settingsPath(), 'utf-8'));
+    const newSettings = JSON.parse(readFileSync(sp, 'utf-8'));
 
-    // The migrate function produces nested rule groups in the rewritten settings.
-    // Each event maps to an array of rule group objects with { hooks: [...] }.
     const postHooks = newSettings.hooks.PostToolUse as any[];
     expect(Array.isArray(postHooks)).toBe(true);
-    // Find the HTTP hook entry (may be nested inside a rule group's hooks array or flat)
     const findHttpHook = (arr: any[], eventName: string) => {
       for (const item of arr) {
         if (item.type === 'http' && item.url?.includes(`/hooks/${eventName}`)) return item;
@@ -137,9 +128,11 @@ describe('migrate', () => {
       },
       custom: 'data',
     };
-    writeFileSync(settingsPath(), JSON.stringify(original), 'utf-8');
+    const sp = settingsPath();
+    assertInTmpDir(sp, tmpDir);
+    writeFileSync(sp, JSON.stringify(original), 'utf-8');
 
-    migrate();
+    migrate(pathOptions());
 
     expect(existsSync(backupPath())).toBe(true);
     const backup = JSON.parse(readFileSync(backupPath(), 'utf-8'));
@@ -147,9 +140,11 @@ describe('migrate', () => {
   });
 
   it('throws when no hooks are found in settings', () => {
-    writeFileSync(settingsPath(), JSON.stringify({ someOther: 'config' }), 'utf-8');
+    const sp = settingsPath();
+    assertInTmpDir(sp, tmpDir);
+    writeFileSync(sp, JSON.stringify({ someOther: 'config' }), 'utf-8');
 
-    expect(() => migrate()).toThrow('No hooks found');
+    expect(() => migrate(pathOptions())).toThrow('No hooks found');
   });
 
   it('throws when already migrated (HTTP hooks detected)', () => {
@@ -165,9 +160,11 @@ describe('migrate', () => {
       },
     };
 
-    writeFileSync(settingsPath(), JSON.stringify(settings), 'utf-8');
+    const sp = settingsPath();
+    assertInTmpDir(sp, tmpDir);
+    writeFileSync(sp, JSON.stringify(settings), 'utf-8');
 
-    expect(() => migrate()).toThrow('already contain HTTP hooks');
+    expect(() => migrate(pathOptions())).toThrow('already contain HTTP hooks');
   });
 
   it('adds SessionStart ensure-running command even if no hooks for that event', () => {
@@ -183,15 +180,16 @@ describe('migrate', () => {
       },
     };
 
-    writeFileSync(settingsPath(), JSON.stringify(settings), 'utf-8');
+    const sp = settingsPath();
+    assertInTmpDir(sp, tmpDir);
+    writeFileSync(sp, JSON.stringify(settings), 'utf-8');
 
-    migrate();
+    migrate(pathOptions());
 
-    const newSettings = JSON.parse(readFileSync(settingsPath(), 'utf-8'));
+    const newSettings = JSON.parse(readFileSync(sp, 'utf-8'));
     const sessionStart = newSettings.hooks.SessionStart as any[];
     expect(sessionStart).toBeDefined();
     expect(Array.isArray(sessionStart)).toBe(true);
-    // Should contain an ensure-running command (may be flat or nested in a rule group)
     const findEnsure = (arr: any[]) => {
       for (const item of arr) {
         if (item.type === 'command' && item.command?.includes('ensure-running')) return item;
@@ -207,7 +205,7 @@ describe('migrate', () => {
 
   it('throws when settings.json cannot be found', () => {
     // Don't create settings.json — getSettingsPath returns null
-    expect(() => migrate()).toThrow('Could not find Claude Code settings.json');
+    expect(() => migrate(pathOptions())).toThrow('Could not find Claude Code settings.json');
   });
 });
 
@@ -216,13 +214,11 @@ describe('restore', () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'clooks-restore-'));
-    testEnv.home = tmpDir;
     mkdirSync(join(tmpDir, '.claude'), { recursive: true });
     mkdirSync(join(tmpDir, '.clooks'), { recursive: true });
   });
 
   afterEach(() => {
-    testEnv.home = '';
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -234,30 +230,44 @@ describe('restore', () => {
     return join(tmpDir, '.clooks', 'settings.backup.json');
   }
 
+  function pathOptions() {
+    return {
+      homeDir: tmpDir,
+      configDir: join(tmpDir, '.clooks'),
+      settingsBackup: backupPath(),
+    };
+  }
+
   it('restores settings from backup', () => {
     const original = {
       hooks: {
         PreToolUse: [{ hooks: [{ type: 'command', command: 'echo original' }] }],
       },
     };
-    writeFileSync(backupPath(), JSON.stringify(original), 'utf-8');
-    writeFileSync(settingsPath(), JSON.stringify({ hooks: { modified: true } }), 'utf-8');
+    const bp = backupPath();
+    const sp = settingsPath();
+    assertInTmpDir(bp, tmpDir);
+    assertInTmpDir(sp, tmpDir);
+    writeFileSync(bp, JSON.stringify(original), 'utf-8');
+    writeFileSync(sp, JSON.stringify({ hooks: { modified: true } }), 'utf-8');
 
-    const restoredPath = restore();
+    const restoredPath = restore(pathOptions());
 
-    expect(restoredPath).toBe(settingsPath());
-    const restored = JSON.parse(readFileSync(settingsPath(), 'utf-8'));
+    expect(restoredPath).toBe(sp);
+    const restored = JSON.parse(readFileSync(sp, 'utf-8'));
     expect(restored.hooks.PreToolUse).toBeDefined();
   });
 
   it('throws when no backup exists', () => {
-    writeFileSync(settingsPath(), JSON.stringify({}), 'utf-8');
+    const sp = settingsPath();
+    assertInTmpDir(sp, tmpDir);
+    writeFileSync(sp, JSON.stringify({}), 'utf-8');
 
     const bp = backupPath();
     if (existsSync(bp)) {
       rmSync(bp);
     }
 
-    expect(() => restore()).toThrow('No backup found');
+    expect(() => restore(pathOptions())).toThrow('No backup found');
   });
 });

@@ -28,13 +28,24 @@ interface ClaudeSettings {
   [key: string]: unknown;
 }
 
+/** Options for overriding default paths (used by tests to avoid touching real filesystem). */
+export interface MigratePathOptions {
+  /** Override the home directory used to locate settings.json */
+  homeDir?: string;
+  /** Override the config directory (~/.clooks) */
+  configDir?: string;
+  /** Override the settings backup path */
+  settingsBackup?: string;
+}
+
 /**
  * Find the Claude Code settings.json path.
  */
-export function getSettingsPath(): string | null {
+export function getSettingsPath(options?: MigratePathOptions): string | null {
+  const home = options?.homeDir ?? homedir();
   const candidates = [
-    join(homedir(), '.claude', 'settings.local.json'),
-    join(homedir(), '.claude', 'settings.json'),
+    join(home, '.claude', 'settings.local.json'),
+    join(home, '.claude', 'settings.json'),
   ];
 
   for (const candidate of candidates) {
@@ -55,8 +66,11 @@ export function getSettingsPath(): string | null {
  * 4. Rewrite settings with HTTP hooks pointing to localhost:7890
  * 5. Keep SessionStart with ensure-running command hook + HTTP hook
  */
-export function migrate(): { manifestPath: string; settingsPath: string; handlersCreated: number } {
-  const settingsPath = getSettingsPath();
+export function migrate(options?: MigratePathOptions): { manifestPath: string; settingsPath: string; handlersCreated: number } {
+  const configDir = options?.configDir ?? CONFIG_DIR;
+  const settingsBackup = options?.settingsBackup ?? SETTINGS_BACKUP;
+
+  const settingsPath = getSettingsPath(options);
   if (!settingsPath) {
     throw new Error('Could not find Claude Code settings.json (checked ~/.claude/settings.json and ~/.claude/settings.local.json)');
   }
@@ -79,12 +93,12 @@ export function migrate(): { manifestPath: string; settingsPath: string; handler
   }
 
   // Ensure config dir exists
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true });
+  if (!existsSync(configDir)) {
+    mkdirSync(configDir, { recursive: true });
   }
 
   // Back up original settings
-  writeFileSync(SETTINGS_BACKUP, raw, 'utf-8');
+  writeFileSync(settingsBackup, raw, 'utf-8');
 
   // Extract command hooks and build manifest
   const manifestHandlers: Partial<Record<HookEvent, HandlerConfig[]>> = {};
@@ -133,7 +147,7 @@ export function migrate(): { manifestPath: string; settingsPath: string; handler
     `# Date: ${new Date().toISOString()}\n\n` +
     stringifyYaml(manifest);
 
-  const manifestPath = join(CONFIG_DIR, 'manifest.yaml');
+  const manifestPath = join(configDir, 'manifest.yaml');
   writeFileSync(manifestPath, yamlStr, 'utf-8');
 
   // Rewrite settings.json with HTTP hooks in the nested rule group format
@@ -198,17 +212,19 @@ export function migrate(): { manifestPath: string; settingsPath: string; handler
 /**
  * Restore original settings.json from backup.
  */
-export function restore(): string {
-  if (!existsSync(SETTINGS_BACKUP)) {
-    throw new Error('No backup found at ' + SETTINGS_BACKUP);
+export function restore(options?: MigratePathOptions): string {
+  const settingsBackup = options?.settingsBackup ?? SETTINGS_BACKUP;
+
+  if (!existsSync(settingsBackup)) {
+    throw new Error('No backup found at ' + settingsBackup);
   }
 
-  const settingsPath = getSettingsPath();
+  const settingsPath = getSettingsPath(options);
   if (!settingsPath) {
     throw new Error('Could not find Claude Code settings.json to restore');
   }
 
-  const backup = readFileSync(SETTINGS_BACKUP, 'utf-8');
+  const backup = readFileSync(settingsBackup, 'utf-8');
   writeFileSync(settingsPath, backup, 'utf-8');
 
   return settingsPath;
