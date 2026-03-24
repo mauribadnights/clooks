@@ -16,7 +16,7 @@ const program = new Command();
 program
   .name('clooks')
   .description('Persistent hook runtime for Claude Code')
-  .version('0.1.0');
+  .version('0.2.0');
 
 // --- start ---
 program
@@ -123,6 +123,22 @@ program
   .action(() => {
     const metrics = new MetricsCollector();
     console.log(metrics.formatStatsTable());
+
+    // Append cost summary if LLM data exists
+    const costStats = metrics.getCostStats();
+    if (costStats.totalCost > 0) {
+      console.log('');
+      console.log(metrics.formatCostTable());
+    }
+  });
+
+// --- costs ---
+program
+  .command('costs')
+  .description('Show LLM cost breakdown')
+  .action(() => {
+    const metrics = new MetricsCollector();
+    console.log(metrics.formatCostTable());
   });
 
 // --- migrate ---

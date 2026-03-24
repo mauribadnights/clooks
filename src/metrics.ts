@@ -2,8 +2,8 @@
 
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
-import { METRICS_FILE } from './constants.js';
-import type { MetricEntry, HookEvent } from './types.js';
+import { METRICS_FILE, COSTS_FILE } from './constants.js';
+import type { MetricEntry, HookEvent, CostEntry } from './types.js';
 
 interface AggregatedStats {
   event: string;
@@ -126,6 +126,115 @@ export class MetricsCollector {
     return all.length;
   }
 
+  // --- Cost tracking ---
+
+  /** Track a cost entry — appends to costs.jsonl. */
+  trackCost(entry: CostEntry): void {
+    try {
+      const dir = dirname(COSTS_FILE);
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+      appendFileSync(COSTS_FILE, JSON.stringify(entry) + '\n', 'utf-8');
+    } catch {
+      // Non-critical — cost tracking should not crash the daemon
+    }
+  }
+
+  /** Get cost statistics from persisted cost entries. */
+  getCostStats(): { totalCost: number; totalTokens: number; byModel: Record<string, { cost: number; tokens: number }>; byHandler: Record<string, { cost: number; tokens: number; calls: number }> } {
+    const entries = this.loadCosts();
+    let totalCost = 0;
+    let totalTokens = 0;
+    const byModel: Record<string, { cost: number; tokens: number }> = {};
+    const byHandler: Record<string, { cost: number; tokens: number; calls: number }> = {};
+
+    for (const entry of entries) {
+      totalCost += entry.cost_usd;
+      const tokens = entry.usage.input_tokens + entry.usage.output_tokens;
+      totalTokens += tokens;
+
+      // By model
+      if (!byModel[entry.model]) {
+        byModel[entry.model] = { cost: 0, tokens: 0 };
+      }
+      byModel[entry.model].cost += entry.cost_usd;
+      byModel[entry.model].tokens += tokens;
+
+      // By handler
+      if (!byHandler[entry.handler]) {
+        byHandler[entry.handler] = { cost: 0, tokens: 0, calls: 0 };
+      }
+      byHandler[entry.handler].cost += entry.cost_usd;
+      byHandler[entry.handler].tokens += tokens;
+      byHandler[entry.handler].calls++;
+    }
+
+    return { totalCost, totalTokens, byModel, byHandler };
+  }
+
+  /** Format cost data as a CLI-friendly table. */
+  formatCostTable(): string {
+    const entries = this.loadCosts();
+    if (entries.length === 0) {
+      return 'No LLM cost data recorded yet.';
+    }
+
+    const stats = this.getCostStats();
+    const lines: string[] = [];
+
+    lines.push('LLM Cost Summary');
+    lines.push(`  Total: $${stats.totalCost.toFixed(4)} (${formatTokenCount(stats.totalTokens)} tokens)`);
+    lines.push('');
+
+    // By Model
+    lines.push('  By Model:');
+    for (const [model, data] of Object.entries(stats.byModel)) {
+      lines.push(`    ${model.padEnd(22)} $${data.cost.toFixed(4)} (${formatTokenCount(data.tokens)} tokens)`);
+    }
+    lines.push('');
+
+    // By Handler
+    lines.push('  By Handler:');
+    for (const [handler, data] of Object.entries(stats.byHandler)) {
+      const avgTokens = data.calls > 0 ? Math.round(data.tokens / data.calls) : 0;
+      lines.push(`    ${handler.padEnd(22)} $${data.cost.toFixed(4)} (${data.calls} calls, avg ${avgTokens} tokens)`);
+    }
+
+    // Batching savings estimate
+    const batchedCount = entries.filter(e => e.batched).length;
+    const unbatchedCount = entries.length - batchedCount;
+    if (batchedCount > 0) {
+      // Estimate: batched calls saved roughly (batchedCount - unique_batch_calls) API calls
+      // Simple heuristic: batched entries share cost, individual would each cost input overhead
+      const batchedCost = entries.filter(e => e.batched).reduce((s, e) => s + e.cost_usd, 0);
+      // Rough estimate: without batching, each would have its own input tokens overhead
+      const estimatedIndividualCost = batchedCost * 2; // conservative 2x estimate
+      const saved = estimatedIndividualCost - batchedCost;
+      if (saved > 0) {
+        const pct = Math.round((saved / (stats.totalCost + saved)) * 100);
+        lines.push('');
+        lines.push(`  Batching saved: ~$${saved.toFixed(4)} (~${pct}% of what individual calls would cost)`);
+      }
+    }
+
+    return lines.join('\n');
+  }
+
+  /** Load cost entries from disk. */
+  private loadCosts(): CostEntry[] {
+    if (!existsSync(COSTS_FILE)) {
+      return [];
+    }
+    try {
+      const raw = readFileSync(COSTS_FILE, 'utf-8');
+      const lines = raw.trim().split('\n').filter(Boolean);
+      return lines.map((line) => JSON.parse(line) as CostEntry);
+    } catch {
+      return [];
+    }
+  }
+
   /** Load all entries from disk + memory (deduped by combining disk file). */
   private loadAll(): MetricEntry[] {
     if (!existsSync(METRICS_FILE)) {
@@ -140,6 +249,12 @@ export class MetricsCollector {
       return [...this.entries];
     }
   }
+}
+
+function formatTokenCount(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`;
+  return String(tokens);
 }
 
 function padRow(cols: string[]): string {

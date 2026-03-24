@@ -5,7 +5,8 @@ import { pathToFileURL } from 'url';
 import { resolve } from 'path';
 import { DEFAULT_HANDLER_TIMEOUT, MAX_CONSECUTIVE_FAILURES } from './constants.js';
 import { evaluateFilter } from './filter.js';
-import type { HandlerConfig, ScriptHandlerConfig, InlineHandlerConfig, HandlerResult, HandlerState, HookEvent, HookInput, PrefetchContext } from './types.js';
+import { executeLLMHandlersBatched } from './llm.js';
+import type { HandlerConfig, ScriptHandlerConfig, InlineHandlerConfig, LLMHandlerConfig, HandlerResult, HandlerState, HookEvent, HookInput, PrefetchContext } from './types.js';
 
 /** Runtime state per handler ID */
 const handlerStates = new Map<string, HandlerState>();
@@ -40,64 +41,79 @@ export async function executeHandlers(
   handlers: HandlerConfig[],
   context?: PrefetchContext
 ): Promise<HandlerResult[]> {
-  const promises = handlers.map(async (handler) => {
+  // Separate LLM handlers from script/inline, applying shared pre-checks
+  const llmHandlers: LLMHandlerConfig[] = [];
+  const otherPromises: Promise<HandlerResult>[] = [];
+  const skippedResults: HandlerResult[] = [];
+
+  for (const handler of handlers) {
     // Skip disabled handlers (both manifest-disabled and auto-disabled)
     if (handler.enabled === false) {
-      return { id: handler.id, ok: true, output: undefined, duration_ms: 0 } as HandlerResult;
+      skippedResults.push({ id: handler.id, ok: true, output: undefined, duration_ms: 0 });
+      continue;
     }
 
     const state = getState(handler.id);
     if (state.disabled) {
-      return {
+      skippedResults.push({
         id: handler.id,
         ok: false,
         error: `Auto-disabled after ${MAX_CONSECUTIVE_FAILURES} consecutive failures`,
         duration_ms: 0,
-      } as HandlerResult;
+      });
+      continue;
     }
 
     // Evaluate keyword filter before execution
     if (handler.filter) {
       const inputStr = JSON.stringify(input);
       if (!evaluateFilter(handler.filter, inputStr)) {
-        return {
+        skippedResults.push({
           id: handler.id,
           ok: true,
           output: undefined,
           duration_ms: 0,
           filtered: true,
-        } as HandlerResult;
+        });
+        continue;
       }
     }
 
     state.totalFires++;
 
-    const start = performance.now();
-    let result: HandlerResult;
-
-    try {
-      if (handler.type === 'script') {
-        result = await executeScriptHandler(handler, input);
-      } else if (handler.type === 'inline') {
-        result = await executeInlineHandler(handler, input);
-      } else {
-        result = {
-          id: handler.id,
-          ok: false,
-          error: `Unknown handler type: ${(handler as HandlerConfig).type}`,
-          duration_ms: 0,
-        };
-      }
-    } catch (err) {
-      result = {
-        id: handler.id,
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        duration_ms: performance.now() - start,
-      };
+    if (handler.type === 'llm') {
+      llmHandlers.push(handler);
+    } else {
+      // Execute script/inline handlers in parallel
+      otherPromises.push(executeOtherHandler(handler, input));
     }
+  }
 
-    // Update failure tracking
+  // Execute script/inline handlers in parallel
+  const otherResults = otherPromises.length > 0
+    ? await Promise.all(otherPromises)
+    : [];
+
+  // Execute LLM handlers with batching (graceful — never crashes)
+  let llmResults: HandlerResult[] = [];
+  if (llmHandlers.length > 0) {
+    try {
+      llmResults = await executeLLMHandlersBatched(llmHandlers, input, context ?? {});
+    } catch (err) {
+      // Graceful degradation: if LLM execution entirely fails, return error results
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      llmResults = llmHandlers.map(h => ({
+        id: h.id,
+        ok: false,
+        error: `LLM execution failed: ${errorMsg}`,
+        duration_ms: 0,
+      }));
+    }
+  }
+
+  // Update failure tracking for all executed results
+  for (const result of [...otherResults, ...llmResults]) {
+    const state = getState(result.id);
     if (result.ok) {
       state.consecutiveFailures = 0;
     } else {
@@ -107,11 +123,37 @@ export async function executeHandlers(
         state.disabled = true;
       }
     }
+  }
 
-    return result;
-  });
+  return [...skippedResults, ...otherResults, ...llmResults];
+}
 
-  return Promise.all(promises);
+/**
+ * Execute a single script or inline handler with error handling.
+ */
+async function executeOtherHandler(handler: HandlerConfig, input: HookInput): Promise<HandlerResult> {
+  const start = performance.now();
+  try {
+    if (handler.type === 'script') {
+      return await executeScriptHandler(handler, input);
+    } else if (handler.type === 'inline') {
+      return await executeInlineHandler(handler, input);
+    } else {
+      return {
+        id: handler.id,
+        ok: false,
+        error: `Unknown handler type: ${(handler as HandlerConfig).type}`,
+        duration_ms: 0,
+      };
+    }
+  } catch (err) {
+    return {
+      id: handler.id,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      duration_ms: performance.now() - start,
+    };
+  }
 }
 
 /**

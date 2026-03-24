@@ -7,7 +7,7 @@ import { executeHandlers } from './handlers.js';
 import { prefetchContext } from './prefetch.js';
 import { MetricsCollector } from './metrics.js';
 import { DEFAULT_PORT, PID_FILE, LOG_FILE, CONFIG_DIR, HOOK_EVENTS } from './constants.js';
-import type { Manifest, HookEvent, HookInput, HandlerResult, HandlerConfig, PrefetchContext } from './types.js';
+import type { Manifest, HookEvent, HookInput, HandlerResult, HandlerConfig, PrefetchContext, CostEntry } from './types.js';
 
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
@@ -151,7 +151,7 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
 
         const results = await executeHandlers(event, input, handlers as HandlerConfig[], context);
 
-        // Record metrics
+        // Record metrics and costs
         for (const result of results) {
           metrics.record({
             ts: new Date().toISOString(),
@@ -164,6 +164,24 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
             usage: result.usage,
             cost_usd: result.cost_usd,
           });
+
+          // Track cost for LLM handlers
+          if (result.usage && result.cost_usd !== undefined && result.cost_usd > 0) {
+            // Find the handler config to get model info
+            const handlerConfig = (handlers as HandlerConfig[]).find(h => h.id === result.id);
+            if (handlerConfig && handlerConfig.type === 'llm') {
+              const llmConfig = handlerConfig as import('./types.js').LLMHandlerConfig;
+              metrics.trackCost({
+                ts: new Date().toISOString(),
+                event,
+                handler: result.id,
+                model: llmConfig.model,
+                usage: result.usage,
+                cost_usd: result.cost_usd,
+                batched: !!llmConfig.batchGroup,
+              });
+            }
+          }
         }
 
         const merged = mergeResults(results);
