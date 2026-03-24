@@ -154,8 +154,13 @@ function checkSettingsHooks(): DiagnosticResult {
         return { check: 'Settings hooks', status: 'warn', message: 'No hooks configured in ' + path };
       }
 
-      const hasHttpHook = Object.values(settings.hooks as Record<string, Array<{ type: string; url?: string }>>).some((entries) =>
-        entries.some((e) => e.type === 'http' && e.url?.includes(`localhost:${DEFAULT_PORT}`))
+      // settings.hooks[event] is an array of rule groups, each with a hooks[] array
+      const hasHttpHook = Object.values(
+        settings.hooks as Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; url?: string }> }>>
+      ).some((ruleGroups) =>
+        ruleGroups.some((rule) =>
+          rule.hooks?.some((e) => e.type === 'http' && e.url?.includes(`localhost:${DEFAULT_PORT}`))
+        )
       );
 
       if (hasHttpHook) {

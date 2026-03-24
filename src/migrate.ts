@@ -14,8 +14,17 @@ interface ClaudeHookEntry {
   timeout?: number;
 }
 
+// Claude Code settings.json uses a NESTED hook format:
+// settings.hooks[event] is an array of rule groups, each with an optional matcher
+// and a hooks[] array of actual hook definitions.
+// Example: { "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "http", ... }] }] }
+interface ClaudeHookRule {
+  matcher?: string;
+  hooks: ClaudeHookEntry[];
+}
+
 interface ClaudeSettings {
-  hooks?: Partial<Record<string, ClaudeHookEntry[]>>;
+  hooks?: Partial<Record<string, ClaudeHookRule[]>>;
   [key: string]: unknown;
 }
 
@@ -59,9 +68,11 @@ export function migrate(): { manifestPath: string; settingsPath: string; handler
     throw new Error('No hooks found in settings.json — nothing to migrate');
   }
 
-  // Check if already migrated (HTTP hooks pointing to cchooks)
-  const alreadyMigrated = Object.values(settings.hooks).some((entries) =>
-    entries?.some((e) => e.type === 'http' && e.url?.includes(`localhost:${DEFAULT_PORT}`))
+  // Check if already migrated (HTTP hooks pointing to cchooks inside nested rule groups)
+  const alreadyMigrated = Object.values(settings.hooks).some((ruleGroups) =>
+    ruleGroups?.some((rule) =>
+      rule.hooks?.some((e) => e.type === 'http' && e.url?.includes(`localhost:${DEFAULT_PORT}`))
+    )
   );
   if (alreadyMigrated) {
     throw new Error('Settings already contain HTTP hooks pointing to cchooks. Use "cchooks restore" first if you want to re-migrate.');
@@ -79,11 +90,23 @@ export function migrate(): { manifestPath: string; settingsPath: string; handler
   const manifestHandlers: Partial<Record<HookEvent, HandlerConfig[]>> = {};
   let handlerIndex = 0;
 
-  for (const [eventName, entries] of Object.entries(settings.hooks)) {
-    if (!HOOK_EVENTS.includes(eventName) || !Array.isArray(entries)) continue;
+  // NOTE: In v0.1, matchers from the original rule groups are not preserved in the
+  // migrated HTTP hooks — all command hooks are consolidated into matcher-less rule groups.
+  // This is acceptable because cchooks dispatches based on event type, not matchers.
+  for (const [eventName, ruleGroups] of Object.entries(settings.hooks)) {
+    if (!HOOK_EVENTS.includes(eventName) || !Array.isArray(ruleGroups)) continue;
     const event = eventName as HookEvent;
 
-    const commandHooks = entries.filter((e) => e.type === 'command' && e.command);
+    // Flatten command hooks from ALL rule groups for this event
+    const commandHooks: ClaudeHookEntry[] = [];
+    for (const rule of ruleGroups) {
+      if (!Array.isArray(rule.hooks)) continue;
+      for (const entry of rule.hooks) {
+        if (entry.type === 'command' && entry.command) {
+          commandHooks.push(entry);
+        }
+      }
+    }
     if (commandHooks.length === 0) continue;
 
     manifestHandlers[event] = commandHooks.map((hook) => {
@@ -113,17 +136,23 @@ export function migrate(): { manifestPath: string; settingsPath: string; handler
   const manifestPath = join(CONFIG_DIR, 'manifest.yaml');
   writeFileSync(manifestPath, yamlStr, 'utf-8');
 
-  // Rewrite settings.json with HTTP hooks
-  const newHooks: Record<string, ClaudeHookEntry[]> = {};
+  // Rewrite settings.json with HTTP hooks in the nested rule group format
+  const newHooks: Record<string, ClaudeHookRule[]> = {};
 
   for (const eventName of HOOK_EVENTS) {
     const hadHandlers = manifestHandlers[eventName as HookEvent]?.length ?? 0;
-    // Also check if there were existing non-command hooks to preserve
-    const existingNonCommand = (settings.hooks[eventName] ?? []).filter(
-      (e) => e.type !== 'command'
-    );
+    // Also check if there were existing non-command hooks to preserve (flatten from rule groups)
+    const existingNonCommand: ClaudeHookEntry[] = [];
+    for (const rule of (settings.hooks[eventName] ?? [])) {
+      if (!Array.isArray(rule.hooks)) continue;
+      for (const entry of rule.hooks) {
+        if (entry.type !== 'command') {
+          existingNonCommand.push(entry);
+        }
+      }
+    }
 
-    if (hadHandlers === 0 && existingNonCommand.length === 0) continue;
+    if (hadHandlers === 0 && existingNonCommand.length === 0 && eventName !== 'SessionStart') continue;
 
     const hookEntries: ClaudeHookEntry[] = [...existingNonCommand];
 
@@ -143,13 +172,16 @@ export function migrate(): { manifestPath: string; settingsPath: string; handler
       });
     }
 
-    newHooks[eventName] = hookEntries;
+    if (hookEntries.length > 0) {
+      // Wrap in a single rule group (no matcher — cchooks handles dispatch)
+      newHooks[eventName] = [{ hooks: hookEntries }];
+    }
   }
 
   // Ensure SessionStart always has ensure-running even if no hooks were migrated for it
   if (!newHooks['SessionStart']) {
     newHooks['SessionStart'] = [
-      { type: 'command', command: 'cchooks ensure-running' },
+      { hooks: [{ type: 'command', command: 'cchooks ensure-running' }] },
     ];
   }
 
