@@ -1,4 +1,4 @@
-# cchooks
+# clooks
 
 Persistent hook runtime for Claude Code — eliminate cold starts, get observability.
 
@@ -6,14 +6,14 @@ Persistent hook runtime for Claude Code — eliminate cold starts, get observabi
 
 Claude Code spawns a fresh process for every hook invocation. Power users with multiple hooks (safety guards, context injectors, custom scripts) accumulate **100+ process spawns per session**. Each Node.js cold start costs 50-100ms. That's 6-11 seconds of pure overhead per session — and you get zero visibility into what your hooks are doing.
 
-## How cchooks Fixes It
+## How clooks Fixes It
 
 One persistent HTTP server handles all your hooks. Claude Code's [built-in HTTP hook support](https://docs.anthropic.com/en/docs/claude-code/hooks) POSTs to `localhost:7890` instead of spawning processes. **One process instead of hundreds.**
 
 ```
 ┌─────────────┐     POST /hooks/PreToolUse     ┌──────────────────┐
 │             │ ──────────────────────────────► │                  │
-│ Claude Code │     POST /hooks/Stop           │  cchooks daemon  │
+│ Claude Code │     POST /hooks/Stop           │  clooks daemon  │
 │             │ ──────────────────────────────► │  (persistent)    │
 │             │     POST /hooks/...            │                  │
 │             │ ──────────────────────────────► │  ┌────────────┐ │
@@ -28,15 +28,15 @@ One persistent HTTP server handles all your hooks. Claude Code's [built-in HTTP 
 ## Quick Start
 
 ```bash
-npm install -g cchooks
+npm install -g clooks
 
 # If you have existing hooks in settings.json:
-cchooks migrate    # converts command hooks → HTTP hooks + manifest
+clooks migrate    # converts command hooks → HTTP hooks + manifest
 
 # Or start fresh:
-cchooks init       # creates ~/.cchooks/manifest.yaml
+clooks init       # creates ~/.clooks/manifest.yaml
 
-cchooks start      # starts the daemon
+clooks start      # starts the daemon
 ```
 
 That's it. Claude Code will now POST to your daemon instead of spawning processes.
@@ -45,19 +45,19 @@ That's it. Claude Code will now POST to your daemon instead of spawning processe
 
 | Command | Description |
 |---|---|
-| `cchooks start` | Start the daemon (background by default, `--foreground` for debug) |
-| `cchooks stop` | Stop the daemon |
-| `cchooks status` | Show daemon status, uptime, and handler count |
-| `cchooks stats` | Show hook execution metrics (fires, errors, latency) |
-| `cchooks migrate` | Convert `settings.json` command hooks to HTTP hooks |
-| `cchooks restore` | Restore original `settings.json` from backup |
-| `cchooks doctor` | Run diagnostic health checks |
-| `cchooks init` | Create default config directory and example manifest |
-| `cchooks ensure-running` | Start daemon if not running (used by SessionStart hook) |
+| `clooks start` | Start the daemon (background by default, `--foreground` for debug) |
+| `clooks stop` | Stop the daemon |
+| `clooks status` | Show daemon status, uptime, and handler count |
+| `clooks stats` | Show hook execution metrics (fires, errors, latency) |
+| `clooks migrate` | Convert `settings.json` command hooks to HTTP hooks |
+| `clooks restore` | Restore original `settings.json` from backup |
+| `clooks doctor` | Run diagnostic health checks |
+| `clooks init` | Create default config directory and example manifest |
+| `clooks ensure-running` | Start daemon if not running (used by SessionStart hook) |
 
 ## Manifest Format
 
-Handlers are defined in `~/.cchooks/manifest.yaml`:
+Handlers are defined in `~/.clooks/manifest.yaml`:
 
 ```yaml
 handlers:
@@ -90,7 +90,7 @@ settings:
 ## Stats
 
 ```
-$ cchooks stats
+$ clooks stats
 
 Event               Fires     Errors    Avg (ms)    Min (ms)    Max (ms)
 ------------------------------------------------------------------------
@@ -103,13 +103,13 @@ Total fires: 71 | Total errors: 1 | Spawns saved: ~71
 
 ## How It Works with Claude Code
 
-After `cchooks migrate`, your `settings.json` looks like this:
+After `clooks migrate`, your `settings.json` looks like this:
 
 ```json
 {
   "hooks": {
     "SessionStart": [{ "hooks": [
-      { "type": "command", "command": "cchooks ensure-running" }
+      { "type": "command", "command": "clooks ensure-running" }
     ]}],
     "PreToolUse": [{ "hooks": [
       { "type": "http", "url": "http://localhost:7890/hooks/PreToolUse" }
@@ -127,15 +127,15 @@ Handlers that fail 3 times consecutively are auto-disabled to prevent cascading 
 | Item | Default |
 |---|---|
 | Port | `7890` |
-| Config directory | `~/.cchooks/` |
-| Manifest | `~/.cchooks/manifest.yaml` |
-| Metrics | `~/.cchooks/metrics.jsonl` |
-| Daemon log | `~/.cchooks/daemon.log` |
-| PID file | `~/.cchooks/daemon.pid` |
+| Config directory | `~/.clooks/` |
+| Manifest | `~/.clooks/manifest.yaml` |
+| Metrics | `~/.clooks/metrics.jsonl` |
+| Daemon log | `~/.clooks/daemon.log` |
+| PID file | `~/.clooks/daemon.pid` |
 
 ## Comparison
 
-|  | Without cchooks | With cchooks |
+|  | Without clooks | With clooks |
 |---|---|---|
 | **Process model** | New process per hook invocation | One persistent HTTP server |
 | **Cold start** | 50-100ms per invocation | 0ms (already running) |

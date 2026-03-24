@@ -23,17 +23,17 @@ vi.mock('../src/constants.js', async (importOriginal) => {
     get CONFIG_DIR() {
       if (!testEnv.home) return original.CONFIG_DIR;
       const { join } = require('path');
-      return join(testEnv.home, '.cchooks');
+      return join(testEnv.home, '.clooks');
     },
     get SETTINGS_BACKUP() {
       if (!testEnv.home) return original.SETTINGS_BACKUP;
       const { join } = require('path');
-      return join(testEnv.home, '.cchooks', 'settings.backup.json');
+      return join(testEnv.home, '.clooks', 'settings.backup.json');
     },
     get MANIFEST_PATH() {
       if (!testEnv.home) return original.MANIFEST_PATH;
       const { join } = require('path');
-      return join(testEnv.home, '.cchooks', 'manifest.yaml');
+      return join(testEnv.home, '.clooks', 'manifest.yaml');
     },
   };
 });
@@ -44,10 +44,10 @@ describe('migrate', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'cchooks-migrate-'));
+    tmpDir = mkdtempSync(join(tmpdir(), 'clooks-migrate-'));
     testEnv.home = tmpDir;
     mkdirSync(join(tmpDir, '.claude'), { recursive: true });
-    mkdirSync(join(tmpDir, '.cchooks'), { recursive: true });
+    mkdirSync(join(tmpDir, '.clooks'), { recursive: true });
   });
 
   afterEach(() => {
@@ -60,11 +60,11 @@ describe('migrate', () => {
   }
 
   function backupPath() {
-    return join(tmpDir, '.cchooks', 'settings.backup.json');
+    return join(tmpDir, '.clooks', 'settings.backup.json');
   }
 
   function manifestPath() {
-    return join(tmpDir, '.cchooks', 'manifest.yaml');
+    return join(tmpDir, '.clooks', 'manifest.yaml');
   }
 
   it('finds settings.json via getSettingsPath', () => {
@@ -215,10 +215,10 @@ describe('restore', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'cchooks-restore-'));
+    tmpDir = mkdtempSync(join(tmpdir(), 'clooks-restore-'));
     testEnv.home = tmpDir;
     mkdirSync(join(tmpDir, '.claude'), { recursive: true });
-    mkdirSync(join(tmpDir, '.cchooks'), { recursive: true });
+    mkdirSync(join(tmpDir, '.clooks'), { recursive: true });
   });
 
   afterEach(() => {
@@ -231,7 +231,7 @@ describe('restore', () => {
   }
 
   function backupPath() {
-    return join(tmpDir, '.cchooks', 'settings.backup.json');
+    return join(tmpDir, '.clooks', 'settings.backup.json');
   }
 
   it('restores settings from backup', () => {

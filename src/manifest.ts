@@ -1,4 +1,4 @@
-// cchooks manifest parser (YAML hook definitions)
+// clooks manifest parser (YAML hook definitions)
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
@@ -100,7 +100,7 @@ export function createDefaultManifest(): string {
         {
           id: 'example-guard',
           type: 'script',
-          command: 'echo \'{"additionalContext":"checked by cchooks"}\'',
+          command: 'echo \'{"additionalContext":"checked by clooks"}\'',
           timeout: 3000,
           enabled: true,
         },
@@ -113,8 +113,8 @@ export function createDefaultManifest(): string {
   };
 
   const yamlStr =
-    '# cchooks manifest — define your hook handlers here\n' +
-    '# Docs: https://github.com/mauribadnights/cchooks\n' +
+    '# clooks manifest — define your hook handlers here\n' +
+    '# Docs: https://github.com/mauribadnights/clooks\n' +
     '#\n' +
     '# Handler types:\n' +
     '#   script  — runs a shell command, pipes hook JSON to stdin, reads stdout\n' +

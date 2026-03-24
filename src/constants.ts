@@ -1,10 +1,10 @@
-// cchooks constants
+// clooks constants
 
 import { homedir } from 'os';
 import { join } from 'path';
 
 export const DEFAULT_PORT = 7890;
-export const CONFIG_DIR = join(homedir(), '.cchooks');
+export const CONFIG_DIR = join(homedir(), '.clooks');
 export const MANIFEST_PATH = join(CONFIG_DIR, 'manifest.yaml');
 export const PID_FILE = join(CONFIG_DIR, 'daemon.pid');
 export const METRICS_FILE = join(CONFIG_DIR, 'metrics.jsonl');

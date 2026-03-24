@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// cchooks CLI entry point
+// clooks CLI entry point
 
 import { Command } from 'commander';
 import { loadManifest, createDefaultManifest } from './manifest.js';
@@ -14,14 +14,14 @@ import { existsSync, readFileSync, mkdirSync } from 'fs';
 const program = new Command();
 
 program
-  .name('cchooks')
+  .name('clooks')
   .description('Persistent hook runtime for Claude Code')
   .version('0.1.0');
 
 // --- start ---
 program
   .command('start')
-  .description('Start the cchooks daemon')
+  .description('Start the clooks daemon')
   .option('-f, --foreground', 'Run in foreground (default: background/detached)')
   .action(async (opts: { foreground?: boolean }) => {
     if (!opts.foreground) {
@@ -36,7 +36,7 @@ program
         mkdirSync(CONFIG_DIR, { recursive: true });
       }
 
-      console.log('Starting cchooks daemon in background...');
+      console.log('Starting clooks daemon in background...');
       startDaemonBackground();
       // Give it a moment to start
       await new Promise((r) => setTimeout(r, 500));
@@ -44,7 +44,7 @@ program
         const pid = readFileSync(PID_FILE, 'utf-8').trim();
         console.log(`Daemon started (pid ${pid}), listening on 127.0.0.1:${DEFAULT_PORT}`);
       } else {
-        console.log('Daemon started. Check ~/.cchooks/daemon.log if issues arise.');
+        console.log('Daemon started. Check ~/.clooks/daemon.log if issues arise.');
       }
       process.exit(0);
     }
@@ -59,7 +59,7 @@ program
         .reduce((sum, arr) => sum + (arr?.length ?? 0), 0);
 
       await startDaemon(manifest, metrics);
-      console.log(`cchooks daemon running on 127.0.0.1:${port} (${handlerCount} handler${handlerCount !== 1 ? 's' : ''})`);
+      console.log(`clooks daemon running on 127.0.0.1:${port} (${handlerCount} handler${handlerCount !== 1 ? 's' : ''})`);
     } catch (err) {
       console.error('Failed to start daemon:', err instanceof Error ? err.message : err);
       process.exit(1);
@@ -69,7 +69,7 @@ program
 // --- stop ---
 program
   .command('stop')
-  .description('Stop the cchooks daemon')
+  .description('Stop the clooks daemon')
   .action(() => {
     if (stopDaemon()) {
       console.log('Daemon stopped.');
@@ -128,7 +128,7 @@ program
 // --- migrate ---
 program
   .command('migrate')
-  .description('Migrate Claude Code settings.json to use cchooks HTTP hooks')
+  .description('Migrate Claude Code settings.json to use clooks HTTP hooks')
   .action(() => {
     try {
       const result = migrate();
@@ -136,8 +136,8 @@ program
       console.log(`  Settings: ${result.settingsPath}`);
       console.log(`  Manifest: ${result.manifestPath}`);
       console.log(`  Handlers created: ${result.handlersCreated}`);
-      console.log(`  Backup: ~/.cchooks/settings.backup.json`);
-      console.log('\nRun "cchooks start" to start the daemon.');
+      console.log(`  Backup: ~/.clooks/settings.backup.json`);
+      console.log('\nRun "clooks start" to start the daemon.');
     } catch (err) {
       console.error('Migration failed:', err instanceof Error ? err.message : err);
       process.exit(1);

@@ -1,4 +1,4 @@
-// cchooks type definitions
+// clooks type definitions
 
 /** Hook event names supported by Claude Code */
 export type HookEvent =

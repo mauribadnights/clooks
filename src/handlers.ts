@@ -1,4 +1,4 @@
-// cchooks hook handlers — execution engine
+// clooks hook handlers — execution engine
 
 import { spawn } from 'child_process';
 import { pathToFileURL } from 'url';

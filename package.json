@@ -1,9 +1,9 @@
 {
-  "name": "cchooks",
+  "name": "clooks",
   "version": "0.1.0",
   "description": "Persistent hook runtime for Claude Code — eliminates process spawning overhead and gives you observability",
   "bin": {
-    "cchooks": "./dist/cli.js"
+    "clooks": "./dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -17,7 +17,7 @@
   "author": "mauribadnights",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mauribadnights/cchooks.git"
+    "url": "https://github.com/mauribadnights/clooks.git"
   },
   "keywords": [
     "claude",

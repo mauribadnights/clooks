@@ -1,4 +1,4 @@
-// cchooks metrics and observability
+// clooks metrics and observability
 
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';

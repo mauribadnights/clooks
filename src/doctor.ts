@@ -1,4 +1,4 @@
-// cchooks doctor — diagnostics and health checks
+// clooks doctor — diagnostics and health checks
 
 import { existsSync, accessSync, constants as fsConstants, readFileSync } from 'fs';
 import { get as httpGet } from 'http';
@@ -31,7 +31,7 @@ export async function runDoctor(): Promise<DiagnosticResult[]> {
   // 5. Script handler commands are executable
   results.push(...checkHandlerCommands());
 
-  // 6. Settings.json has HTTP hooks pointing to cchooks
+  // 6. Settings.json has HTTP hooks pointing to clooks
   results.push(checkSettingsHooks());
 
   // 7. No stale PID file
@@ -44,7 +44,7 @@ function checkConfigDir(): DiagnosticResult {
   if (existsSync(CONFIG_DIR)) {
     return { check: 'Config directory', status: 'ok', message: `${CONFIG_DIR} exists` };
   }
-  return { check: 'Config directory', status: 'error', message: `${CONFIG_DIR} does not exist. Run "cchooks start" to create it.` };
+  return { check: 'Config directory', status: 'error', message: `${CONFIG_DIR} does not exist. Run "clooks start" to create it.` };
 }
 
 function checkManifest(): DiagnosticResult {
@@ -164,10 +164,10 @@ function checkSettingsHooks(): DiagnosticResult {
       );
 
       if (hasHttpHook) {
-        return { check: 'Settings hooks', status: 'ok', message: `HTTP hooks point to cchooks in ${path}` };
+        return { check: 'Settings hooks', status: 'ok', message: `HTTP hooks point to clooks in ${path}` };
       }
 
-      return { check: 'Settings hooks', status: 'warn', message: `No HTTP hooks pointing to cchooks in ${path}. Run "cchooks migrate".` };
+      return { check: 'Settings hooks', status: 'warn', message: `No HTTP hooks pointing to clooks in ${path}. Run "clooks migrate".` };
     } catch {
       return { check: 'Settings hooks', status: 'error', message: `Failed to parse ${path}` };
     }
@@ -192,6 +192,6 @@ function checkStalePid(): DiagnosticResult {
     process.kill(pid, 0);
     return { check: 'Stale PID', status: 'ok', message: `PID ${pid} is alive` };
   } catch {
-    return { check: 'Stale PID', status: 'error', message: `Stale PID file: process ${pid} is dead. Remove ${PID_FILE} or run "cchooks start".` };
+    return { check: 'Stale PID', status: 'error', message: `Stale PID file: process ${pid} is dead. Remove ${PID_FILE} or run "clooks start".` };
   }
 }

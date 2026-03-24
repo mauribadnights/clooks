@@ -1,4 +1,4 @@
-// cchooks HTTP server — persistent hook daemon
+// clooks HTTP server — persistent hook daemon
 
 import { createServer as httpCreateServer, type IncomingMessage, type ServerResponse, type Server } from 'http';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, mkdirSync } from 'fs';
@@ -184,7 +184,7 @@ export function startDaemon(manifest: Manifest, metrics: MetricsCollector): Prom
     ctx.server.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
         log(`Port ${port} already in use`);
-        reject(new Error(`Port ${port} is already in use. Is another cchooks instance running?`));
+        reject(new Error(`Port ${port} is already in use. Is another clooks instance running?`));
       } else {
         log(`Server error: ${err.message}`);
         reject(err);

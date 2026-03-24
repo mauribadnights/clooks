@@ -23,7 +23,7 @@ const { MetricsCollector } = await import('../src/metrics.js');
 
 describe('metrics', () => {
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'cchooks-metrics-'));
+    tmpDir = mkdtempSync(join(tmpdir(), 'clooks-metrics-'));
     metricsFile = join(tmpDir, 'metrics.jsonl');
   });
 

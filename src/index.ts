@@ -1,4 +1,4 @@
-// cchooks — public API exports
+// clooks — public API exports
 
 export { createServer, startDaemon, stopDaemon, isDaemonRunning } from './server.js';
 export { loadManifest, validateManifest, createDefaultManifest } from './manifest.js';

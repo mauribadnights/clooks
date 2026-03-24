@@ -183,7 +183,7 @@ describe('manifest', () => {
     let tmpDir: string;
 
     beforeEach(() => {
-      tmpDir = mkdtempSync(join(tmpdir(), 'cchooks-manifest-'));
+      tmpDir = mkdtempSync(join(tmpdir(), 'clooks-manifest-'));
     });
 
     afterEach(() => {
