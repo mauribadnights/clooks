@@ -28,7 +28,7 @@ One persistent HTTP server handles all your hooks. Claude Code's [built-in HTTP 
 ## Quick Start
 
 ```bash
-npm install -g clooks
+npm install -g @mauribadnights/clooks
 
 # If you have existing hooks in settings.json:
 clooks migrate    # converts command hooks → HTTP hooks + manifest
