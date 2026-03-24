@@ -148,9 +148,84 @@ $ clooks doctor
 | Daemon log | `~/.clooks/daemon.log` | Server output log |
 | PID file | `~/.clooks/daemon.pid` | Process ID file |
 
+## v0.2 Features
+
+### LLM Handlers
+
+Call the Anthropic Messages API directly from your manifest. Handlers with the same `batchGroup` are combined into a single API call, saving tokens and latency.
+
+```yaml
+handlers:
+  PreToolUse:
+    - id: code-review
+      type: llm
+      model: claude-haiku-4-5
+      prompt: "Review this tool call for $TOOL_NAME with args: $ARGUMENTS"
+      batchGroup: analysis
+      timeout: 15000
+
+    - id: security-check
+      type: llm
+      model: claude-haiku-4-5
+      prompt: "Check for security issues in $TOOL_NAME call: $ARGUMENTS"
+      batchGroup: analysis    # batched with code-review into one API call
+```
+
+Requires `@anthropic-ai/sdk` as a peer dependency and `ANTHROPIC_API_KEY` env var.
+
+### Intelligent Filtering
+
+Skip handlers based on keywords. Supports OR (`|`) and NOT (`!`) operators. Matching is case-insensitive against the full hook input JSON.
+
+```yaml
+handlers:
+  PreToolUse:
+    - id: bash-guard
+      type: script
+      command: node ~/hooks/guard.js
+      filter: "Bash|Execute|!Read"   # runs for Bash/Execute, never for Read
+```
+
+### Shared Context Pre-fetch
+
+Fetch transcript, git status, or git diff once per hook event and share across all handlers. Avoids redundant I/O when multiple handlers need the same data. Use `$VARIABLE` interpolation in LLM prompts.
+
+```yaml
+prefetch:
+  - transcript
+  - git_status
+  - git_diff
+
+handlers:
+  Stop:
+    - id: session-summary
+      type: llm
+      model: claude-haiku-4-5
+      prompt: "Summarize this session:\n$TRANSCRIPT\n\nGit changes:\n$GIT_DIFF"
+```
+
+### Cost Tracking
+
+Track LLM token usage and costs per handler and model. Pricing is built-in for Haiku 4.5, Sonnet 4.6, and Opus 4.6.
+
+```
+$ clooks costs
+
+LLM Cost Summary
+  Total: $0.0142 (4,280 tokens)
+
+  By Model:
+    claude-haiku-4-5       $0.0142 (4,280 tokens)
+
+  By Handler:
+    code-review            $0.0089 (12 calls, avg 178 tokens)
+    security-check         $0.0053 (12 calls, avg 178 tokens)
+```
+
+Cost data also appears in `clooks stats` when LLM handlers have been used.
+
 ## Roadmap
 
-- **v0.2:** Matcher support in manifest, LLM call batching, intelligent filtering, shared context pre-fetch, token cost tracking
 - **v0.3:** Plugin ecosystem, dependency resolution between handlers
 - **v0.4:** Visual dashboard for hook management and metrics
 
