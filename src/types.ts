@@ -28,38 +28,88 @@ export interface HookInput {
   [key: string]: unknown;                 // extensible
 }
 
-/** Handler types in manifest */
-export type HandlerType = 'script' | 'inline';
+/** Supported LLM models */
+export type LLMModel = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-6';
 
-/** Configuration for a single handler */
-export interface HandlerConfig {
+/** Handler types — extended with 'llm' */
+export type HandlerType = 'script' | 'inline' | 'llm';
+
+/** LLM-specific handler config fields */
+export interface LLMHandlerConfig {
   id: string;
-  type: HandlerType;
-  command?: string;   // for script type
-  module?: string;    // for inline type (path to JS module with default export)
-  timeout?: number;   // ms, default 5000
-  enabled?: boolean;  // default true
+  type: 'llm';
+  model: LLMModel;
+  prompt: string;            // Prompt template with $VARIABLE interpolation
+  batchGroup?: string;       // Group ID — LLM handlers with same group are batched into one call
+  maxTokens?: number;        // Default 1024
+  temperature?: number;      // Default 1.0
+  filter?: string;           // Keyword filter (applies to all handler types)
+  timeout?: number;          // ms, default 30000 for LLM
+  enabled?: boolean;
 }
 
-/** The full manifest structure */
+/** Script handler config */
+export interface ScriptHandlerConfig {
+  id: string;
+  type: 'script';
+  command: string;
+  filter?: string;
+  timeout?: number;
+  enabled?: boolean;
+}
+
+/** Inline handler config */
+export interface InlineHandlerConfig {
+  id: string;
+  type: 'inline';
+  module: string;
+  filter?: string;
+  timeout?: number;
+  enabled?: boolean;
+}
+
+/** Union of all handler configs */
+export type HandlerConfig = ScriptHandlerConfig | InlineHandlerConfig | LLMHandlerConfig;
+
+/** Prefetchable context keys */
+export type PrefetchKey = 'transcript' | 'git_status' | 'git_diff';
+
+/** Pre-fetched context data */
+export interface PrefetchContext {
+  transcript?: string;
+  git_status?: string;
+  git_diff?: string;
+}
+
+/** Extended manifest with prefetch and LLM settings */
 export interface Manifest {
   handlers: Partial<Record<HookEvent, HandlerConfig[]>>;
+  prefetch?: PrefetchKey[];  // Global prefetch config
   settings?: {
     port?: number;
     logLevel?: 'debug' | 'info' | 'warn' | 'error';
+    anthropicApiKey?: string;  // Can also use ANTHROPIC_API_KEY env var
   };
 }
 
-/** Result from executing a single handler */
-export interface HandlerResult {
-  id: string;
-  ok: boolean;
-  output?: unknown;
-  error?: string;
-  duration_ms: number;
+/** Token usage from API response */
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
 }
 
-/** A single metrics entry */
+/** Cost entry for tracking */
+export interface CostEntry {
+  ts: string;
+  event: HookEvent;
+  handler: string;
+  model: LLMModel;
+  usage: TokenUsage;
+  cost_usd: number;
+  batched: boolean;
+}
+
+/** Extended metrics entry with optional cost fields */
 export interface MetricEntry {
   ts: string;
   event: HookEvent;
@@ -67,6 +117,21 @@ export interface MetricEntry {
   duration_ms: number;
   ok: boolean;
   error?: string;
+  filtered?: boolean;       // Was this handler skipped by filter?
+  usage?: TokenUsage;       // For LLM handlers
+  cost_usd?: number;        // For LLM handlers
+}
+
+/** Extended handler result with cost info */
+export interface HandlerResult {
+  id: string;
+  ok: boolean;
+  output?: unknown;
+  error?: string;
+  duration_ms: number;
+  filtered?: boolean;
+  usage?: TokenUsage;
+  cost_usd?: number;
 }
 
 /** Runtime state for tracking consecutive failures */

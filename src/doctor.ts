@@ -107,7 +107,8 @@ function checkHandlerCommands(): DiagnosticResult[] {
     const manifest = loadManifest();
     for (const [_event, handlers] of Object.entries(manifest.handlers)) {
       for (const handler of handlers as HandlerConfig[]) {
-        if (handler.type !== 'script' || !handler.command) continue;
+        if (handler.type !== 'script') continue;
+        if (!handler.command) continue;
 
         // Extract the base command (first word)
         const baseCmd = handler.command.split(/\s+/)[0];

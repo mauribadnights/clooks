@@ -12,6 +12,16 @@ export const LOG_FILE = join(CONFIG_DIR, 'daemon.log');
 export const SETTINGS_BACKUP = join(CONFIG_DIR, 'settings.backup.json');
 export const MAX_CONSECUTIVE_FAILURES = 3;
 export const DEFAULT_HANDLER_TIMEOUT = 5000; // ms
+export const COSTS_FILE = join(CONFIG_DIR, 'costs.jsonl');
+export const DEFAULT_LLM_TIMEOUT = 30000; // ms
+export const DEFAULT_LLM_MAX_TOKENS = 1024;
+
+/** Pricing per million tokens (USD) — as of March 2026 */
+export const LLM_PRICING: Record<string, { input: number; output: number }> = {
+  'claude-haiku-4-5':  { input: 0.80, output: 4.00 },
+  'claude-sonnet-4-6': { input: 3.00, output: 15.00 },
+  'claude-opus-4-6':   { input: 15.00, output: 75.00 },
+};
 
 export const HOOK_EVENTS: string[] = [
   'SessionStart',

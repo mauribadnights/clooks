@@ -56,16 +56,43 @@ export function validateManifest(manifest: Manifest): void {
       }
       seenIds.add(handler.id);
 
-      if (!handler.type || !['script', 'inline'].includes(handler.type)) {
-        throw new Error(`Handler "${handler.id}" must have type "script" or "inline"`);
+      if (!handler.type || !['script', 'inline', 'llm'].includes(handler.type)) {
+        throw new Error(`Handler "${handler.id}" must have type "script", "inline", or "llm"`);
       }
 
-      if (handler.type === 'script' && !handler.command) {
+      if (handler.type === 'script' && !('command' in handler && handler.command)) {
         throw new Error(`Script handler "${handler.id}" must have a "command" field`);
       }
 
-      if (handler.type === 'inline' && !handler.module) {
+      if (handler.type === 'inline' && !('module' in handler && handler.module)) {
         throw new Error(`Inline handler "${handler.id}" must have a "module" field`);
+      }
+
+      if (handler.type === 'llm') {
+        const llm = handler as import('./types.js').LLMHandlerConfig;
+        if (!llm.model) {
+          throw new Error(`LLM handler "${handler.id}" must have a "model" field`);
+        }
+        if (!llm.prompt) {
+          throw new Error(`LLM handler "${handler.id}" must have a "prompt" field`);
+        }
+        const validModels = ['claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-6'];
+        if (!validModels.includes(llm.model)) {
+          throw new Error(`LLM handler "${handler.id}" model must be one of: ${validModels.join(', ')}`);
+        }
+      }
+    }
+  }
+
+  // Validate prefetch if present
+  if (manifest.prefetch !== undefined) {
+    if (!Array.isArray(manifest.prefetch)) {
+      throw new Error('prefetch must be an array');
+    }
+    const validKeys = ['transcript', 'git_status', 'git_diff'];
+    for (const key of manifest.prefetch) {
+      if (!validKeys.includes(key)) {
+        throw new Error(`Invalid prefetch key: "${key}". Valid keys: ${validKeys.join(', ')}`);
       }
     }
   }

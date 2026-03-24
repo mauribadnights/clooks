@@ -4,7 +4,8 @@ import { spawn } from 'child_process';
 import { pathToFileURL } from 'url';
 import { resolve } from 'path';
 import { DEFAULT_HANDLER_TIMEOUT, MAX_CONSECUTIVE_FAILURES } from './constants.js';
-import type { HandlerConfig, HandlerResult, HandlerState, HookEvent, HookInput } from './types.js';
+import { evaluateFilter } from './filter.js';
+import type { HandlerConfig, ScriptHandlerConfig, InlineHandlerConfig, HandlerResult, HandlerState, HookEvent, HookInput, PrefetchContext } from './types.js';
 
 /** Runtime state per handler ID */
 const handlerStates = new Map<string, HandlerState>();
@@ -31,11 +32,13 @@ export function getHandlerStates(): Map<string, HandlerState> {
 /**
  * Execute all handlers for an event in parallel.
  * Returns merged results array.
+ * Optionally accepts pre-fetched context for LLM prompt rendering.
  */
 export async function executeHandlers(
   _event: HookEvent,
   input: HookInput,
-  handlers: HandlerConfig[]
+  handlers: HandlerConfig[],
+  context?: PrefetchContext
 ): Promise<HandlerResult[]> {
   const promises = handlers.map(async (handler) => {
     // Skip disabled handlers (both manifest-disabled and auto-disabled)
@@ -53,6 +56,20 @@ export async function executeHandlers(
       } as HandlerResult;
     }
 
+    // Evaluate keyword filter before execution
+    if (handler.filter) {
+      const inputStr = JSON.stringify(input);
+      if (!evaluateFilter(handler.filter, inputStr)) {
+        return {
+          id: handler.id,
+          ok: true,
+          output: undefined,
+          duration_ms: 0,
+          filtered: true,
+        } as HandlerResult;
+      }
+    }
+
     state.totalFires++;
 
     const start = performance.now();
@@ -67,7 +84,7 @@ export async function executeHandlers(
         result = {
           id: handler.id,
           ok: false,
-          error: `Unknown handler type: ${handler.type}`,
+          error: `Unknown handler type: ${(handler as HandlerConfig).type}`,
           duration_ms: 0,
         };
       }
@@ -102,11 +119,12 @@ export async function executeHandlers(
  * read stdout as JSON response.
  */
 export function executeScriptHandler(handler: HandlerConfig, input: HookInput): Promise<HandlerResult> {
-  const timeout = handler.timeout ?? DEFAULT_HANDLER_TIMEOUT;
+  const h = handler as ScriptHandlerConfig;
+  const timeout = h.timeout ?? DEFAULT_HANDLER_TIMEOUT;
 
   return new Promise((resolve) => {
     const start = performance.now();
-    const child = spawn('sh', ['-c', handler.command!], {
+    const child = spawn('sh', ['-c', h.command], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout,
     });
@@ -174,19 +192,20 @@ export function executeScriptHandler(handler: HandlerConfig, input: HookInput): 
  * Execute an inline handler: dynamically import a JS module and call its default export.
  */
 export async function executeInlineHandler(handler: HandlerConfig, input: HookInput): Promise<HandlerResult> {
-  const timeout = handler.timeout ?? DEFAULT_HANDLER_TIMEOUT;
+  const h = handler as InlineHandlerConfig;
+  const timeout = h.timeout ?? DEFAULT_HANDLER_TIMEOUT;
   const start = performance.now();
 
   try {
-    const modulePath = resolve(handler.module!);
+    const modulePath = resolve(h.module);
     const moduleUrl = pathToFileURL(modulePath).href;
     const mod = await import(moduleUrl);
 
     if (typeof mod.default !== 'function') {
       return {
-        id: handler.id,
+        id: h.id,
         ok: false,
-        error: `Module "${handler.module}" does not export a default function`,
+        error: `Module "${h.module}" does not export a default function`,
         duration_ms: performance.now() - start,
       };
     }

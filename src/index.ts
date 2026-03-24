@@ -7,15 +7,25 @@ export { migrate, restore, getSettingsPath } from './migrate.js';
 export type { MigratePathOptions } from './migrate.js';
 export { runDoctor } from './doctor.js';
 export { executeHandlers } from './handlers.js';
-export { DEFAULT_PORT, CONFIG_DIR, MANIFEST_PATH, PID_FILE, METRICS_FILE, LOG_FILE } from './constants.js';
+export { evaluateFilter } from './filter.js';
+export { prefetchContext, renderPromptTemplate } from './prefetch.js';
+export { DEFAULT_PORT, CONFIG_DIR, MANIFEST_PATH, PID_FILE, METRICS_FILE, LOG_FILE, COSTS_FILE, DEFAULT_LLM_TIMEOUT, DEFAULT_LLM_MAX_TOKENS, LLM_PRICING } from './constants.js';
 export type {
   HookEvent,
   HookInput,
   HandlerType,
   HandlerConfig,
+  ScriptHandlerConfig,
+  InlineHandlerConfig,
+  LLMHandlerConfig,
+  LLMModel,
   Manifest,
   HandlerResult,
   MetricEntry,
   HandlerState,
   DiagnosticResult,
+  PrefetchKey,
+  PrefetchContext,
+  TokenUsage,
+  CostEntry,
 } from './types.js';

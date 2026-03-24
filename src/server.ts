@@ -4,9 +4,10 @@ import { createServer as httpCreateServer, type IncomingMessage, type ServerResp
 import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, mkdirSync } from 'fs';
 import { spawn } from 'child_process';
 import { executeHandlers } from './handlers.js';
+import { prefetchContext } from './prefetch.js';
 import { MetricsCollector } from './metrics.js';
 import { DEFAULT_PORT, PID_FILE, LOG_FILE, CONFIG_DIR, HOOK_EVENTS } from './constants.js';
-import type { Manifest, HookEvent, HookInput, HandlerResult, HandlerConfig } from './types.js';
+import type { Manifest, HookEvent, HookInput, HandlerResult, HandlerConfig, PrefetchContext } from './types.js';
 
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
@@ -142,7 +143,13 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
       log(`Hook: ${eventName} (${handlers.length} handler${handlers.length > 1 ? 's' : ''})`);
 
       try {
-        const results = await executeHandlers(event, input, handlers as HandlerConfig[]);
+        // Pre-fetch shared context if configured
+        let context: PrefetchContext | undefined;
+        if (manifest.prefetch && manifest.prefetch.length > 0) {
+          context = await prefetchContext(manifest.prefetch, input);
+        }
+
+        const results = await executeHandlers(event, input, handlers as HandlerConfig[], context);
 
         // Record metrics
         for (const result of results) {
@@ -153,6 +160,9 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
             duration_ms: result.duration_ms,
             ok: result.ok,
             error: result.error,
+            filtered: result.filtered,
+            usage: result.usage,
+            cost_usd: result.cost_usd,
           });
         }
 

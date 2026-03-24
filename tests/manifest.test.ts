@@ -113,7 +113,7 @@ describe('manifest', () => {
         },
       };
 
-      expect(() => validateManifest(manifest)).toThrow('must have type "script" or "inline"');
+      expect(() => validateManifest(manifest)).toThrow('must have type "script", "inline", or "llm"');
     });
 
     it('throws when handlers for an event is not an array', () => {
