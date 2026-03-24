@@ -1,5 +1,5 @@
 {
-  "name": "clooks",
+  "name": "@mauribadnights/clooks",
   "version": "0.1.0",
   "description": "Persistent hook runtime for Claude Code — eliminates process spawning overhead and gives you observability",
   "bin": {
@@ -11,7 +11,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bench": "npx tsx benchmarks/bench.ts"
   },
   "license": "MIT",
   "author": "mauribadnights",
@@ -40,6 +41,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.1"
   }
