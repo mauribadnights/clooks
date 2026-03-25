@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { loadCompositeManifest } from './manifest.js';
+import { importPlugins } from './import-plugins.js';
 import { DEFAULT_PORT, MANIFEST_PATH } from './constants.js';
 import type { Manifest, HookEvent } from './types.js';
 
@@ -70,6 +71,20 @@ export function syncSettings(options?: SyncOptions): string[] {
     manifest = options.manifest;
   } else {
     manifest = loadCompositeManifest();
+
+    // Also merge in Claude Code plugin hooks
+    const { handlers: ccHandlers } = importPlugins();
+    for (const [event, eventHandlers] of Object.entries(ccHandlers)) {
+      const hookEvent = event as HookEvent;
+      if (!manifest.handlers[hookEvent]) manifest.handlers[hookEvent] = [];
+      // Avoid duplicates: only add handlers whose IDs are not already present
+      const existingIds = new Set(manifest.handlers[hookEvent]!.map(h => h.id));
+      for (const handler of eventHandlers) {
+        if (!existingIds.has(handler.id)) {
+          manifest.handlers[hookEvent]!.push(handler);
+        }
+      }
+    }
   }
 
   const port = manifest.settings?.port ?? DEFAULT_PORT;

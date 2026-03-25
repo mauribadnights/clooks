@@ -12,9 +12,10 @@ import { generateAuthToken, rotateToken } from './auth.js';
 import { installPlugin, uninstallPlugin, listPlugins, loadPlugins } from './plugin.js';
 import { syncSettings } from './sync.js';
 import { installService, uninstallService, isServiceInstalled, getServiceStatus } from './service.js';
-import { DEFAULT_PORT, CONFIG_DIR, PID_FILE, PLUGIN_MANIFEST_NAME } from './constants.js';
+import { DEFAULT_PORT, CONFIG_DIR, PID_FILE, PLUGIN_MANIFEST_NAME, MANIFEST_PATH } from './constants.js';
 import { launchDashboard } from './tui.js';
 import { installAgent } from './agent.js';
+import { importPlugins } from './import-plugins.js';
 import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 
@@ -264,6 +265,70 @@ program
       if (settingsPath) {
         console.log(`Settings updated: ${settingsPath}`);
       }
+    }
+  });
+
+// --- import-plugins ---
+program
+  .command('import-plugins')
+  .description('Import hooks from installed Claude Code plugins')
+  .action(async () => {
+    try {
+      const { plugins, handlers } = importPlugins();
+
+      if (plugins.length === 0) {
+        console.log('No Claude Code plugins with hooks found.');
+        return;
+      }
+
+      // Load current manifest
+      const manifest = loadCompositeManifest();
+
+      // Remove previously imported plugin handlers (those with "/" matching discovered plugin names)
+      const pluginNames = new Set(plugins.map(p => p.name));
+      for (const [event, eventHandlers] of Object.entries(manifest.handlers)) {
+        if (!eventHandlers) continue;
+        manifest.handlers[event as import('./types.js').HookEvent] = eventHandlers.filter(h => {
+          const slashIdx = h.id.indexOf('/');
+          if (slashIdx === -1) return true; // user handler, keep
+          const prefix = h.id.substring(0, slashIdx);
+          return !pluginNames.has(prefix); // remove if prefix matches a discovered plugin
+        });
+      }
+
+      // Add new imported handlers
+      for (const [event, eventHandlers] of Object.entries(handlers)) {
+        const hookEvent = event as import('./types.js').HookEvent;
+        if (!manifest.handlers[hookEvent]) manifest.handlers[hookEvent] = [];
+        manifest.handlers[hookEvent]!.push(...eventHandlers);
+      }
+
+      // Write updated manifest
+      const { stringify: stringifyYaml } = await import('yaml');
+      const { writeFileSync } = await import('fs');
+      const yamlStr =
+        '# clooks manifest — updated by import-plugins\n' +
+        `# Date: ${new Date().toISOString()}\n\n` +
+        stringifyYaml(manifest);
+      writeFileSync(MANIFEST_PATH, yamlStr, 'utf-8');
+
+      // Sync settings.json
+      const syncAdded = syncSettings();
+
+      // Report
+      const totalHandlers = Object.values(handlers).reduce((sum, arr) => sum + arr.length, 0);
+      console.log(`Imported ${totalHandlers} handler(s) from ${plugins.length} CC plugin(s):`);
+      for (const p of plugins) {
+        const count = Object.values(p.hooks).reduce((sum, arr) => sum + arr.filter(h => h.type === 'command').length, 0);
+        const enhanced = p.clooksEnhancements ? ' (with clooks.yaml)' : '';
+        console.log(`  ${p.name} v${p.version}: ${count} handler(s)${enhanced}`);
+      }
+      if (syncAdded.length > 0) {
+        console.log(`Synced HTTP hooks for: ${syncAdded.join(', ')}`);
+      }
+    } catch (err) {
+      console.error('Import failed:', err instanceof Error ? err.message : err);
+      process.exit(1);
     }
   });
 

@@ -6,6 +6,7 @@ import { homedir } from 'os';
 import { CONFIG_DIR, SETTINGS_BACKUP, DEFAULT_PORT, HOOK_EVENTS, HOOKS_DIR, MANIFEST_PATH } from './constants.js';
 import { loadManifest } from './manifest.js';
 import { installBuiltinHooks } from './builtin-hooks.js';
+import { importPlugins } from './import-plugins.js';
 import type { Manifest, HandlerConfig, HookEvent } from './types.js';
 import { stringify as stringifyYaml } from 'yaml';
 
@@ -206,6 +207,14 @@ export function migrate(options?: MigratePathOptions): { manifestPath: string; s
     timeout: 6000,
     enabled: true,
   });
+
+  // Import Claude Code plugin hooks
+  const { handlers: ccHandlers } = importPlugins();
+  for (const [event, eventHandlers] of Object.entries(ccHandlers)) {
+    const hookEvent = event as HookEvent;
+    if (!manifestHandlers[hookEvent]) manifestHandlers[hookEvent] = [];
+    manifestHandlers[hookEvent]!.push(...eventHandlers);
+  }
 
   // Write manifest.yaml
   const manifest: Manifest = {
