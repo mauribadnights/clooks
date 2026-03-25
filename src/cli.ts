@@ -11,6 +11,7 @@ import { runDoctor } from './doctor.js';
 import { generateAuthToken, rotateToken } from './auth.js';
 import { installPlugin, uninstallPlugin, listPlugins, loadPlugins } from './plugin.js';
 import { syncSettings } from './sync.js';
+import { installService, uninstallService, isServiceInstalled, getServiceStatus } from './service.js';
 import { DEFAULT_PORT, CONFIG_DIR, PID_FILE, PLUGIN_MANIFEST_NAME } from './constants.js';
 import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
@@ -20,7 +21,7 @@ const program = new Command();
 program
   .name('clooks')
   .description('Persistent hook runtime for Claude Code')
-  .version('0.3.3');
+  .version('0.3.4');
 
 // --- start ---
 program
@@ -113,6 +114,9 @@ program
     const pid = existsSync(PID_FILE) ? readFileSync(PID_FILE, 'utf-8').trim() : '?';
 
     // Try to hit health endpoint
+    // Service status
+    const serviceStatus = getServiceStatus();
+
     try {
       const { get } = await import('http');
       const data = await new Promise<string>((resolve, reject) => {
@@ -133,8 +137,10 @@ program
       console.log(`Uptime: ${formatUptime(health.uptime)}`);
       console.log(`Handlers loaded: ${health.handlers_loaded}`);
       console.log(`Plugins: ${pluginCount}`);
+      console.log(`Service: ${serviceStatus}`);
     } catch {
       console.log(`Status: running (pid ${pid})`);
+      console.log(`Service: ${serviceStatus}`);
       console.log(`Note: Could not reach health endpoint on port ${DEFAULT_PORT}`);
     }
   });
@@ -181,6 +187,16 @@ program
       console.log(`  Handlers created: ${result.handlersCreated}`);
       console.log(`  Backup: ~/.clooks/settings.backup.json`);
       console.log('\nRun "clooks start" to start the daemon.');
+
+      // Auto-install system service
+      if (!isServiceInstalled()) {
+        try {
+          installService();
+          console.log('System service installed (auto-start on login, auto-restart on crash).');
+        } catch {
+          console.log('Note: Could not install system service. Run "clooks service install" manually.');
+        }
+      }
     } catch (err) {
       console.error('Migration failed:', err instanceof Error ? err.message : err);
       process.exit(1);
@@ -295,6 +311,16 @@ program
     console.log(`Created: ${path}`);
     console.log(`Auth token: ${token}`);
     console.log('Edit this file to configure your hook handlers.');
+
+    // Auto-install system service
+    if (!isServiceInstalled()) {
+      try {
+        installService();
+        console.log('System service installed (auto-start on login, auto-restart on crash).');
+      } catch {
+        console.log('Note: Could not install system service. Run "clooks service install" manually.');
+      }
+    }
   });
 
 // --- rotate-token ---
@@ -437,6 +463,46 @@ program
           console.log(`    Agents: ${manifest.extras.agents.join(', ')}`);
         }
       }
+    }
+  });
+
+// --- service ---
+const service = program.command('service').description('Manage clooks system service');
+
+service.command('install')
+  .description('Install as system service (auto-start, auto-restart)')
+  .action(() => {
+    try {
+      installService();
+      console.log('Service installed. clooks will now:');
+      console.log('  - Start automatically on login');
+      console.log('  - Restart automatically if it crashes');
+      console.log('  - Survive sleep/wake cycles');
+    } catch (err) {
+      console.error('Failed to install service:', err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
+  });
+
+service.command('uninstall')
+  .description('Remove system service')
+  .action(() => {
+    try {
+      uninstallService();
+      console.log('Service removed.');
+    } catch (err) {
+      console.error('Failed to uninstall service:', err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
+  });
+
+service.command('status')
+  .description('Show service status')
+  .action(() => {
+    const status = getServiceStatus();
+    console.log(`Service: ${status}`);
+    if (status === 'not-installed') {
+      console.log('Run "clooks service install" to install.');
     }
   });
 

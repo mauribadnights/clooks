@@ -14,6 +14,8 @@ export { RateLimiter } from './ratelimit.js';
 export { startWatcher, stopWatcher } from './watcher.js';
 export { generateAuthToken, validateAuth, rotateToken } from './auth.js';
 export { syncSettings } from './sync.js';
+export { installService, uninstallService, isServiceInstalled, getServiceStatus } from './service.js';
+export type { ServiceStatus } from './service.js';
 export type { SyncOptions } from './sync.js';
 export type { RotateTokenOptions } from './auth.js';
 export { evaluateFilter } from './filter.js';

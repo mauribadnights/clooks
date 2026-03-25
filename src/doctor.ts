@@ -8,6 +8,7 @@ import { homedir } from 'os';
 import { CONFIG_DIR, MANIFEST_PATH, PID_FILE, DEFAULT_PORT, PLUGIN_MANIFEST_NAME } from './constants.js';
 import { loadManifest } from './manifest.js';
 import { isDaemonRunning } from './server.js';
+import { getServiceStatus } from './service.js';
 import { loadRegistry, validatePluginManifest } from './plugin.js';
 import { parse as parseYaml } from 'yaml';
 import type { DiagnosticResult, HandlerConfig, HookEvent, PluginManifest } from './types.js';
@@ -44,6 +45,9 @@ export async function runDoctor(): Promise<DiagnosticResult[]> {
 
   // 9. Plugin health checks
   results.push(...checkPluginHealth());
+
+  // 10. System service
+  results.push(checkService());
 
   return results;
 }
@@ -318,4 +322,11 @@ function checkPluginHealth(): DiagnosticResult[] {
   }
 
   return results;
+}
+
+function checkService(): DiagnosticResult {
+  const status = getServiceStatus();
+  if (status === 'running') return { check: 'System service', status: 'ok', message: 'Installed and running' };
+  if (status === 'stopped') return { check: 'System service', status: 'warn', message: 'Installed but not running' };
+  return { check: 'System service', status: 'warn', message: 'Not installed. Run "clooks service install" for auto-restart.' };
 }
