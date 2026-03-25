@@ -5,7 +5,7 @@
 import { Command } from 'commander';
 import { loadManifest, loadCompositeManifest, createDefaultManifest } from './manifest.js';
 import { MetricsCollector } from './metrics.js';
-import { startDaemon, stopDaemon, isDaemonRunning, startDaemonBackground } from './server.js';
+import { startDaemon, stopDaemon, isDaemonRunning, isDaemonHealthy, cleanupStaleDaemon, startDaemonBackground } from './server.js';
 import { migrate, restore, getSettingsPath } from './migrate.js';
 import { runDoctor } from './doctor.js';
 import { generateAuthToken, rotateToken } from './auth.js';
@@ -31,10 +31,18 @@ program
   .action(async (opts: { foreground?: boolean; watch?: boolean }) => {
     const noWatch = opts.watch === false;
     if (!opts.foreground) {
-      // Background mode: check if already running, then spawn detached
+      // Background mode: check if already running and healthy
       if (isDaemonRunning()) {
-        console.log('Daemon is already running.');
-        process.exit(0);
+        const healthy = await isDaemonHealthy();
+        if (healthy) {
+          console.log('Daemon is already running.');
+          process.exit(0);
+        }
+        // PID alive but daemon unhealthy — stale process after sleep/lid-close
+        const stalePid = cleanupStaleDaemon();
+        if (stalePid) {
+          console.log(`Cleaned up stale daemon (pid ${stalePid}), starting fresh`);
+        }
       }
 
       // Ensure config dir exists
@@ -235,9 +243,24 @@ program
   .description('Start daemon if not already running (used by SessionStart hook)')
   .action(async () => {
     if (isDaemonRunning()) {
-      // Already running — sync settings silently and exit fast
-      syncSettings();
-      process.exit(0);
+      const healthy = await isDaemonHealthy();
+      if (healthy) {
+        // Already running and healthy — sync settings silently and exit fast
+        syncSettings();
+        process.exit(0);
+      }
+      // PID alive but daemon unhealthy — stale process after sleep/lid-close
+      const stalePid = cleanupStaleDaemon();
+      if (stalePid) {
+        // Log to daemon.log for visibility
+        const { appendFileSync } = await import('fs');
+        const { LOG_FILE } = await import('./constants.js');
+        try {
+          appendFileSync(LOG_FILE, `[${new Date().toISOString()}] Cleaned up stale daemon (pid ${stalePid}), starting fresh\n`, 'utf-8');
+        } catch {
+          // ignore
+        }
+      }
     }
 
     // Ensure config dir exists

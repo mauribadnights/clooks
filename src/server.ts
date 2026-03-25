@@ -442,6 +442,14 @@ export function startDaemon(manifest: Manifest, metrics: MetricsCollector, optio
 
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
+
+    // Visibility into macOS sleep/wake cycles
+    process.on('SIGTSTP', () => {
+      log('Daemon suspended (system sleep)');
+    });
+    process.on('SIGCONT', () => {
+      log('Daemon resumed (system wake)');
+    });
   });
 }
 
@@ -487,7 +495,8 @@ export function stopDaemon(): boolean {
 }
 
 /**
- * Check if daemon is currently running.
+ * Check if daemon is currently running (PID check only).
+ * Use for stop/status where a quick check is fine.
  */
 export function isDaemonRunning(): boolean {
   if (!existsSync(PID_FILE)) return false;
@@ -506,9 +515,87 @@ export function isDaemonRunning(): boolean {
 }
 
 /**
+ * Check if daemon is running AND healthy (PID + health endpoint).
+ * Defends against stale PIDs reused by macOS after sleep/lid-close.
+ * Use for ensure-running and start where correctness matters.
+ */
+export async function isDaemonHealthy(): Promise<boolean> {
+  if (!existsSync(PID_FILE)) return false;
+
+  const pidStr = readFileSync(PID_FILE, 'utf-8').trim();
+  const pid = parseInt(pidStr, 10);
+  if (isNaN(pid)) return false;
+
+  // Step 1: PID alive?
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+
+  // Step 2: Health endpoint responds?
+  const port = DEFAULT_PORT; // health check always on default port
+  try {
+    const { get } = await import('http');
+    const data = await new Promise<string>((resolve, reject) => {
+      const req = get(`http://127.0.0.1:${port}/health`, (res) => {
+        let body = '';
+        res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+        res.on('end', () => resolve(body));
+      });
+      req.on('error', reject);
+      req.setTimeout(2000, () => { req.destroy(); reject(new Error('timeout')); });
+    });
+
+    const health = JSON.parse(data);
+    return health.status === 'ok';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Clean up a stale daemon: remove PID file and attempt to kill the process.
+ * Returns the stale PID for logging purposes.
+ */
+export function cleanupStaleDaemon(): number | null {
+  if (!existsSync(PID_FILE)) return null;
+
+  const pidStr = readFileSync(PID_FILE, 'utf-8').trim();
+  const pid = parseInt(pidStr, 10);
+
+  // Remove stale PID file
+  try {
+    unlinkSync(PID_FILE);
+  } catch {
+    // ignore
+  }
+
+  // Try to kill the stale process (might be our daemon but unhealthy)
+  if (!isNaN(pid)) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      // Process doesn't exist — that's fine
+    }
+    return pid;
+  }
+
+  return null;
+}
+
+/**
  * Start daemon as a detached background process.
+ * Always removes any existing PID file first — the new daemon writes its own.
  */
 export function startDaemonBackground(options?: { noWatch?: boolean }): void {
+  // Clean any stale PID file before spawning
+  try {
+    if (existsSync(PID_FILE)) unlinkSync(PID_FILE);
+  } catch {
+    // ignore
+  }
+
   const args = [process.argv[1], 'start', '--foreground'];
   if (options?.noWatch) {
     args.push('--no-watch');
