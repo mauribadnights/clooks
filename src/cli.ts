@@ -19,7 +19,7 @@ const program = new Command();
 program
   .name('clooks')
   .description('Persistent hook runtime for Claude Code')
-  .version('0.3.0');
+  .version('0.3.1');
 
 // --- start ---
 program
