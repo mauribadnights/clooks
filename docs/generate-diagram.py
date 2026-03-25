@@ -7,157 +7,170 @@ from pathlib import Path
 
 # --- Colors ---
 BG = "#FFFFFF"
-BOX_CLAUDE = "#F0F4FF"
-BOX_DAEMON = "#F5F0FF"
-BOX_HANDLER_SCRIPT = "#FFF8F0"
-BOX_HANDLER_INLINE = "#F0FFF4"
-BOX_HANDLER_LLM = "#FFF0F5"
-BORDER_CLAUDE = "#4A7ADB"
-BORDER_DAEMON = "#7C4DDB"
-BORDER_HANDLER = "#999999"
-ARROW_COLOR = "#555555"
-TEXT_MAIN = "#1A1A2E"
-TEXT_DIM = "#666666"
-ACCENT = "#7C4DDB"
+CLR_CLAUDE_FILL = "#E8F0FE"
+CLR_CLAUDE_EDGE = "#4285F4"
+CLR_DAEMON_FILL = "#F3E8FF"
+CLR_DAEMON_EDGE = "#7C3AED"
+CLR_SCRIPT_FILL = "#FFF7ED"
+CLR_SCRIPT_EDGE = "#EA580C"
+CLR_INLINE_FILL = "#ECFDF5"
+CLR_INLINE_EDGE = "#059669"
+CLR_LLM_FILL = "#FFF1F2"
+CLR_LLM_EDGE = "#E11D48"
+CLR_ARROW = "#475569"
+CLR_TEXT = "#1E293B"
+CLR_DIM = "#64748B"
+CLR_ACCENT = "#7C3AED"
+
+FONT = "sans-serif"
 
 
-def draw_box(ax, x, y, w, h, label, sublabel=None, facecolor="#F5F5F5",
-             edgecolor="#999999", fontsize=11, sublabel_fontsize=8.5):
-    """Draw a rounded rectangle with centered text."""
+def rounded_box(ax, x, y, w, h, facecolor, edgecolor, lw=1.8):
+    """Draw a FancyBboxPatch and return it."""
     rect = patches.FancyBboxPatch(
         (x, y), w, h,
-        boxstyle="round,pad=0.02",
+        boxstyle="round,pad=0.12",
         facecolor=facecolor,
         edgecolor=edgecolor,
-        linewidth=1.5,
+        linewidth=lw,
     )
     ax.add_patch(rect)
-    ty = y + h / 2 if sublabel is None else y + h * 0.58
-    ax.text(x + w / 2, ty, label, ha="center", va="center",
-            fontsize=fontsize, fontweight="bold", color=TEXT_MAIN)
-    if sublabel:
-        ax.text(x + w / 2, y + h * 0.3, sublabel, ha="center", va="center",
-                fontsize=sublabel_fontsize, color=TEXT_DIM, style="italic")
+    return rect
 
 
-def draw_arrow(ax, x1, y1, x2, y2, label=None, color=ARROW_COLOR):
-    """Draw an arrow with optional label."""
+def arrow(ax, x1, y1, x2, y2, label=None, label_offset_y=0.18, color=CLR_ARROW):
+    """Draw an arrow with optional centered label."""
     ax.annotate(
         "", xy=(x2, y2), xytext=(x1, y1),
         arrowprops=dict(
-            arrowstyle="->,head_width=0.3,head_length=0.15",
-            color=color, lw=1.5,
+            arrowstyle="->,head_width=0.25,head_length=0.12",
+            color=color, lw=1.6, connectionstyle="arc3,rad=0",
         ),
     )
     if label:
         mx = (x1 + x2) / 2
-        my = (y1 + y2) / 2 + 0.15
+        my = (y1 + y2) / 2 + label_offset_y
         ax.text(mx, my, label, ha="center", va="center",
-                fontsize=8, color=TEXT_DIM,
-                bbox=dict(boxstyle="round,pad=0.15", facecolor="white",
-                          edgecolor="none", alpha=0.9))
+                fontsize=9, color=CLR_DIM, family=FONT,
+                bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
+                          edgecolor="#E2E8F0", linewidth=0.8, alpha=0.95))
 
 
 def main():
-    fig, ax = plt.subplots(1, 1, figsize=(14, 7))
+    fig, ax = plt.subplots(figsize=(14, 6))
     ax.set_xlim(0, 14)
-    ax.set_ylim(0, 7)
+    ax.set_ylim(0, 6)
     ax.set_aspect("equal")
     ax.axis("off")
     fig.patch.set_facecolor(BG)
 
-    # Title
-    ax.text(7, 6.6, "clooks architecture", ha="center", va="center",
-            fontsize=16, fontweight="bold", color=TEXT_MAIN)
-    ax.text(7, 6.25, "Persistent hook runtime for Claude Code",
-            ha="center", va="center", fontsize=10, color=TEXT_DIM)
+    # ── Title ──
+    ax.text(7, 5.65, "clooks architecture", ha="center", va="center",
+            fontsize=15, fontweight="bold", color=CLR_TEXT, family=FONT)
+    ax.text(7, 5.35, "Persistent hook runtime for Claude Code",
+            ha="center", va="center", fontsize=9.5, color=CLR_DIM, family=FONT)
 
-    # --- Claude Code box (left) ---
-    draw_box(ax, 0.5, 2.0, 2.8, 3.5,
-             "Claude Code", "hook events",
-             facecolor=BOX_CLAUDE, edgecolor=BORDER_CLAUDE, fontsize=13)
+    # =====================================================================
+    # COLUMN 1 — Claude Code (left)
+    # =====================================================================
+    cx, cy, cw, ch = 0.4, 1.4, 2.8, 3.6
+    rounded_box(ax, cx, cy, cw, ch, CLR_CLAUDE_FILL, CLR_CLAUDE_EDGE)
 
-    # Hook event labels inside Claude box
+    ax.text(cx + cw / 2, cy + ch - 0.35, "Claude Code",
+            ha="center", va="center", fontsize=12, fontweight="bold",
+            color=CLR_CLAUDE_EDGE, family=FONT)
+
+    ax.text(cx + cw / 2, cy + ch - 0.75, "Hook Events:",
+            ha="center", va="center", fontsize=9, color=CLR_DIM, family=FONT)
+
     events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]
     for i, ev in enumerate(events):
-        ey = 4.8 - i * 0.55
-        ax.text(1.9, ey, ev, ha="center", va="center",
-                fontsize=7.5, color=BORDER_CLAUDE, family="monospace")
+        ax.text(cx + cw / 2, cy + ch - 1.15 - i * 0.42, ev,
+                ha="center", va="center", fontsize=8.5, color=CLR_TEXT,
+                family="monospace")
 
-    # --- Daemon box (center) ---
-    draw_box(ax, 5.0, 1.5, 3.5, 4.5,
-             "clooks daemon", "localhost:7890",
-             facecolor=BOX_DAEMON, edgecolor=BORDER_DAEMON, fontsize=13)
+    # =====================================================================
+    # COLUMN 2 — clooks daemon (center)
+    # =====================================================================
+    dx, dy, dw, dh = 5.2, 1.0, 3.4, 4.0
+    rounded_box(ax, dx, dy, dw, dh, CLR_DAEMON_FILL, CLR_DAEMON_EDGE)
 
-    # Internal components
-    components = [
-        ("Router", 4.6),
-        ("Auth + Rate Limit", 4.1),
-        ("Prefetch Context", 3.6),
-        ("Dependency DAG", 3.1),
-        ("Metrics + Costs", 2.6),
-        ("Circuit Breaker", 2.1),
+    ax.text(dx + dw / 2, dy + dh - 0.35, "clooks daemon",
+            ha="center", va="center", fontsize=12, fontweight="bold",
+            color=CLR_DAEMON_EDGE, family=FONT)
+
+    ax.text(dx + dw / 2, dy + dh - 0.72, "localhost:7890",
+            ha="center", va="center", fontsize=9, color=CLR_DIM,
+            family="monospace")
+
+    features = ["Router", "Prefetch", "Dep Resolution", "Metrics", "Circuit Breaker"]
+    bullet_x = dx + 0.5
+    for i, feat in enumerate(features):
+        fy = dy + dh - 1.2 - i * 0.42
+        ax.text(bullet_x, fy, "\u2022  " + feat,
+                ha="left", va="center", fontsize=8.5, color=CLR_TEXT,
+                family=FONT)
+
+    # =====================================================================
+    # COLUMN 3 — Handler boxes (right)
+    # =====================================================================
+    hx, hw, hh = 10.2, 3.2, 0.9
+    handler_gap = 1.2
+
+    handlers = [
+        ("Script Handler", "~5\u201335 ms", CLR_SCRIPT_FILL, CLR_SCRIPT_EDGE),
+        ("Inline Handler", "<1 ms", CLR_INLINE_FILL, CLR_INLINE_EDGE),
+        ("LLM Handler", "API call", CLR_LLM_FILL, CLR_LLM_EDGE),
     ]
-    for label, cy in components:
-        ax.text(6.75, cy, label, ha="center", va="center",
-                fontsize=7.5, color=BORDER_DAEMON, family="monospace")
 
-    # --- Handler boxes (right) ---
-    handler_groups = [
-        ("Script", "sh -c command", BOX_HANDLER_SCRIPT, 5.0),
-        ("Inline", "JS module import", BOX_HANDLER_INLINE, 3.7),
-        ("LLM", "Anthropic API", BOX_HANDLER_LLM, 2.4),
-    ]
-    for label, sub, color, hy in handler_groups:
-        draw_box(ax, 10.0, hy, 2.8, 0.9,
-                 f"{label} Handler", sub,
-                 facecolor=color, edgecolor=BORDER_HANDLER, fontsize=10,
-                 sublabel_fontsize=7.5)
+    # Position handlers: top one aligns near daemon top, stack downward
+    top_handler_y = 3.8
+    handler_centers = []
 
-    # --- Arrows ---
-    # Claude -> Daemon
-    draw_arrow(ax, 3.3, 3.75, 5.0, 3.75, "HTTP POST")
+    for i, (label, timing, fill, edge) in enumerate(handlers):
+        hy = top_handler_y - i * handler_gap
+        rounded_box(ax, hx, hy, hw, hh, fill, edge)
+        ax.text(hx + hw / 2, hy + hh / 2 + 0.12, label,
+                ha="center", va="center", fontsize=10.5, fontweight="bold",
+                color=edge, family=FONT)
+        ax.text(hx + hw / 2, hy + hh / 2 - 0.2, timing,
+                ha="center", va="center", fontsize=8.5, color=CLR_DIM,
+                family="monospace")
+        handler_centers.append(hy + hh / 2)
 
-    # Daemon -> Handlers
-    draw_arrow(ax, 8.5, 4.5, 10.0, 5.35)
-    draw_arrow(ax, 8.5, 3.75, 10.0, 4.15)
-    draw_arrow(ax, 8.5, 3.0, 10.0, 2.85)
+    # =====================================================================
+    # ARROWS
+    # =====================================================================
 
-    # Response arrow (bottom, going back)
-    draw_arrow(ax, 5.0, 1.8, 3.3, 1.8, "JSON response")
+    # Claude Code -> Daemon  (horizontal, at midpoint)
+    mid_y = cy + ch / 2
+    arrow(ax, cx + cw, mid_y, dx, mid_y, label="HTTP POST", label_offset_y=0.22)
 
-    # --- Bootstrap annotation ---
-    ax.text(1.9, 1.3, "SessionStart fires", ha="center", va="center",
-            fontsize=8, color=TEXT_DIM)
-    ax.text(1.9, 1.0, "clooks ensure-running", ha="center", va="center",
-            fontsize=8, color=ACCENT, fontweight="bold", family="monospace")
-    draw_arrow(ax, 2.8, 1.15, 5.0, 1.6, color=ACCENT)
+    # Daemon -> each Handler
+    daemon_right_x = dx + dw
+    for hc_y in handler_centers:
+        arrow(ax, daemon_right_x, hc_y, hx, hc_y)
 
-    # --- Legend ---
-    ax.text(10.5, 1.5, "Handler Types:", ha="center", va="center",
-            fontsize=8.5, fontweight="bold", color=TEXT_MAIN)
-    legend_items = [
-        ("Script", "~5-35ms (subprocess)", BOX_HANDLER_SCRIPT),
-        ("Inline", "<1ms (in-process)", BOX_HANDLER_INLINE),
-        ("LLM", "Network-bound (API)", BOX_HANDLER_LLM),
-    ]
-    for i, (name, desc, color) in enumerate(legend_items):
-        ly = 1.1 - i * 0.35
-        rect = patches.FancyBboxPatch(
-            (9.3, ly - 0.1), 0.3, 0.2,
-            boxstyle="round,pad=0.02",
-            facecolor=color, edgecolor=BORDER_HANDLER, linewidth=0.8,
-        )
-        ax.add_patch(rect)
-        ax.text(9.75, ly, f"{name}: {desc}", ha="left", va="center",
-                fontsize=7, color=TEXT_DIM)
+    # Daemon -> Claude Code return arrow (below the forward arrow)
+    return_y = mid_y - 0.55
+    arrow(ax, dx, return_y, cx + cw, return_y,
+          label="JSON response", label_offset_y=-0.25, color="#94A3B8")
 
-    # Save
+    # =====================================================================
+    # FOOTNOTE — bootstrap note
+    # =====================================================================
+    ax.text(7, 0.35, 'SessionStart fires "clooks ensure-running" to bootstrap daemon',
+            ha="center", va="center", fontsize=8.5, color=CLR_DIM, family=FONT,
+            style="italic",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="#F8FAFC",
+                      edgecolor="#E2E8F0", linewidth=0.8))
+
+    # ── Save ──
     out_path = Path(__file__).parent / "architecture.png"
-    fig.savefig(out_path, dpi=200, bbox_inches="tight",
+    fig.savefig(out_path, dpi=300, bbox_inches="tight",
                 facecolor=BG, edgecolor="none")
     plt.close(fig)
-    print(f"Saved: {out_path}")
+    print(f"Saved: {out_path}  ({out_path.stat().st_size / 1024:.0f} KB)")
 
 
 if __name__ == "__main__":
