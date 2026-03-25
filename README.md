@@ -5,6 +5,8 @@ Persistent hook runtime for Claude Code. Eliminate cold starts. Get observabilit
 [![npm](https://img.shields.io/npm/v/@mauribadnights/clooks)](https://www.npmjs.com/package/@mauribadnights/clooks)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+**[Documentation](https://mauribadnights.github.io/clooks/)**
+
 ## Performance
 
 | Metric | Without clooks | With clooks | Improvement |
