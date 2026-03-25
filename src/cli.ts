@@ -150,25 +150,26 @@ program
 program
   .command('stats')
   .description('Show hook execution metrics')
-  .option('-i, --interactive', 'Launch interactive TUI dashboard')
-  .action((opts: { interactive?: boolean }) => {
-    if (opts.interactive) {
-      launchDashboard();
-      return;
-    }
+  .option('-t, --text', 'Plain text output (default when piped)')
+  .action((opts: { text?: boolean }) => {
+    if (opts.text || !process.stdout.isTTY) {
+      // Text output (forced via flag or non-TTY/piped stdout)
+      const metrics = new MetricsCollector();
+      console.log(metrics.formatStatsTable());
 
-    const metrics = new MetricsCollector();
-    console.log(metrics.formatStatsTable());
-
-    console.log('');
-    console.log('Per Handler:');
-    console.log(metrics.formatHandlerStatsTable());
-
-    // Append cost summary if LLM data exists
-    const costStats = metrics.getCostStats();
-    if (costStats.totalCost > 0) {
       console.log('');
-      console.log(metrics.formatCostTable());
+      console.log('Per Handler:');
+      console.log(metrics.formatHandlerStatsTable());
+
+      // Append cost summary if LLM data exists
+      const costStats = metrics.getCostStats();
+      if (costStats.totalCost > 0) {
+        console.log('');
+        console.log(metrics.formatCostTable());
+      }
+    } else {
+      // Interactive TUI (default for terminals)
+      launchDashboard();
     }
   });
 
