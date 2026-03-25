@@ -284,6 +284,7 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
             usage: result.usage,
             cost_usd: result.cost_usd,
             session_id: input.session_id,
+            agent_type: currentAgent,
           });
 
           if (result.usage && result.cost_usd !== undefined && result.cost_usd > 0) {

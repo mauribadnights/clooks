@@ -138,6 +138,7 @@ export interface MetricEntry {
   usage?: TokenUsage;       // For LLM handlers
   cost_usd?: number;        // For LLM handlers
   session_id?: string;      // Claude Code session ID
+  agent_type?: string;      // Agent name (e.g., "builder", "coo") from SessionStart
 }
 
 /** Extended handler result with cost info */

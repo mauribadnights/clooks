@@ -27,16 +27,7 @@ clooks start
 
 ## How It Works
 
-```
-Claude Code                          clooks daemon (localhost:7890)
-    |                                        |
-    |-- SessionStart ------> POST /hooks/SessionStart ------> [handler1, handler2]
-    |-- UserPromptSubmit --> POST /hooks/UserPromptSubmit --> [handler3]
-    |-- PreToolUse (x50) --> POST /hooks/PreToolUse --------> [handler4, handler5]
-    |-- Stop --------------> POST /hooks/Stop ---------------> [handler6]
-    |                                        |
-    |<-------------- JSON responses ---------|
-```
+![Architecture](docs/architecture.png)
 
 One persistent HTTP server replaces per-invocation process spawning. Claude Code POSTs hook events to the daemon, which dispatches to handlers defined in `~/.clooks/manifest.yaml`. Handlers that fail 3 times consecutively are auto-disabled.
 
@@ -397,13 +388,58 @@ When a `PreToolUse` handler returns a deny decision, clooks automatically skips 
 
 ## Contributing
 
+### Setup
+
 ```bash
-git clone https://github.com/mauribadnights/clooks
+git clone https://github.com/mauribadnights/clooks.git
 cd clooks
 npm install
-npm test
-npm run bench
 ```
+
+### Codebase layout
+
+```
+src/
+  cli.ts          Command definitions (commander)
+  server.ts       HTTP daemon — hook routing, auth, session management
+  handlers.ts     Handler execution engine (script, inline, LLM)
+  manifest.ts     Manifest loading and validation
+  metrics.ts      Metrics collection and aggregation
+  tui.ts          Interactive terminal dashboard (ANSI-based)
+  llm.ts          Anthropic API integration and batching
+  filter.ts       Keyword filter engine
+  prefetch.ts     Pre-fetch context (transcript, git status/diff)
+  plugin.ts       Plugin install/remove/list
+  ...
+
+tests/            Mirrors src/ — one test file per module
+benchmarks/       Performance benchmarks
+docs/             Architecture diagram and assets
+hooks/            Built-in hook scripts
+agents/           Built-in agent definitions
+```
+
+### Development workflow
+
+```bash
+npm run build       # Compile TypeScript to dist/
+npm test            # Run all tests (vitest)
+npm run test:watch  # Watch mode
+npm run bench       # Run performance benchmarks
+npx tsc --noEmit    # Type-check without emitting
+```
+
+### Pull request guidelines
+
+1. Fork the repo and create a feature branch from `main`
+2. Write tests for new functionality — tests are required for all PRs
+3. Ensure `npm test` passes and `npx tsc --noEmit` reports zero errors
+4. Write a clear PR description explaining **what** changed and **why**
+5. Keep PRs focused — one feature or fix per PR
+
+### Bug reports and feature requests
+
+Open an issue at [github.com/mauribadnights/clooks/issues](https://github.com/mauribadnights/clooks/issues) with reproduction steps for bugs or a use-case description for features.
 
 ## License
 
