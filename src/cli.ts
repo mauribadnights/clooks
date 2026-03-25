@@ -8,7 +8,7 @@ import { MetricsCollector } from './metrics.js';
 import { startDaemon, stopDaemon, isDaemonRunning, startDaemonBackground } from './server.js';
 import { migrate, restore } from './migrate.js';
 import { runDoctor } from './doctor.js';
-import { generateAuthToken } from './auth.js';
+import { generateAuthToken, rotateToken } from './auth.js';
 import { installPlugin, uninstallPlugin, listPlugins, loadPlugins } from './plugin.js';
 import { DEFAULT_PORT, CONFIG_DIR, PID_FILE, PLUGIN_MANIFEST_NAME } from './constants.js';
 import { existsSync, readFileSync, mkdirSync } from 'fs';
@@ -19,7 +19,7 @@ const program = new Command();
 program
   .name('clooks')
   .description('Persistent hook runtime for Claude Code')
-  .version('0.2.2');
+  .version('0.3.0');
 
 // --- start ---
 program
@@ -238,6 +238,22 @@ program
     console.log(`Created: ${path}`);
     console.log(`Auth token: ${token}`);
     console.log('Edit this file to configure your hook handlers.');
+  });
+
+// --- rotate-token ---
+program
+  .command('rotate-token')
+  .description('Generate new auth token, update manifest and settings.json')
+  .action(() => {
+    try {
+      const newToken = rotateToken();
+      console.log(`Auth token rotated successfully.`);
+      console.log(`New token: ${newToken}`);
+      console.log('If daemon is running, the file watcher will pick up the manifest change.');
+    } catch (err) {
+      console.error('Token rotation failed:', err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
   });
 
 // --- add (install plugin) ---

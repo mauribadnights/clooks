@@ -4,11 +4,13 @@ import { createServer as httpCreateServer, type IncomingMessage, type ServerResp
 import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, mkdirSync } from 'fs';
 import type { FSWatcher } from 'fs';
 import { spawn } from 'child_process';
-import { executeHandlers, resetSessionIsolatedHandlers } from './handlers.js';
+import { executeHandlers, resetSessionIsolatedHandlers, cleanupHandlerState } from './handlers.js';
 import { prefetchContext } from './prefetch.js';
 import { MetricsCollector } from './metrics.js';
 import { startWatcher, stopWatcher } from './watcher.js';
 import { validateAuth } from './auth.js';
+import { DenyCache } from './shortcircuit.js';
+import { RateLimiter } from './ratelimit.js';
 import { DEFAULT_PORT, PID_FILE, LOG_FILE, CONFIG_DIR, HOOK_EVENTS, MANIFEST_PATH } from './constants.js';
 import { loadManifest, loadCompositeManifest } from './manifest.js';
 import type { Manifest, HookEvent, HookInput, HandlerResult, HandlerConfig, PrefetchContext, CostEntry } from './types.js';
@@ -91,6 +93,9 @@ export interface ServerContext {
   startTime: number;
   manifest: Manifest;
   watcher?: FSWatcher;
+  denyCache: DenyCache;
+  rateLimiter: RateLimiter;
+  cleanupInterval?: ReturnType<typeof setInterval>;
 }
 
 /**
@@ -98,15 +103,48 @@ export interface ServerContext {
  */
 export function createServer(manifest: Manifest, metrics: MetricsCollector): ServerContext {
   const startTime = Date.now();
-  const ctx: ServerContext = { server: null as unknown as Server, metrics, startTime, manifest };
+  const denyCache = new DenyCache();
+  const rateLimiter = new RateLimiter();
+  const ctx: ServerContext = {
+    server: null as unknown as Server,
+    metrics,
+    startTime,
+    manifest,
+    denyCache,
+    rateLimiter,
+  };
   const authToken = manifest.settings?.authToken ?? '';
+
+  // Periodic cleanup for deny cache and rate limiter (every 60s)
+  ctx.cleanupInterval = setInterval(() => {
+    denyCache.cleanup();
+    rateLimiter.cleanup();
+  }, 60_000);
+  // Unref so it doesn't keep the process alive
+  if (ctx.cleanupInterval && typeof ctx.cleanupInterval === 'object' && 'unref' in ctx.cleanupInterval) {
+    ctx.cleanupInterval.unref();
+  }
 
   const server = httpCreateServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? '/';
     const method = req.method ?? 'GET';
 
-    // Health check endpoint — no auth required for monitoring
+    // Public health endpoint — minimal, no auth
     if (method === 'GET' && url === '/health') {
+      sendJson(res, 200, { status: 'ok' });
+      return;
+    }
+
+    // Detailed health endpoint — authenticated if authToken configured
+    if (method === 'GET' && url === '/health/detail') {
+      if (authToken) {
+        const authHeader = req.headers['authorization'] as string | undefined;
+        if (!validateAuth(authHeader, authToken)) {
+          sendJson(res, 401, { error: 'Unauthorized' });
+          return;
+        }
+      }
+
       const handlerCount = Object.values(ctx.manifest.handlers)
         .reduce((sum, arr) => sum + (arr?.length ?? 0), 0);
 
@@ -121,9 +159,18 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
 
     // Auth check for all POST requests
     if (method === 'POST' && authToken) {
+      const source = req.socket.remoteAddress ?? 'unknown';
+
+      // Rate limiting check
+      if (!rateLimiter.check(source)) {
+        sendJson(res, 429, { error: 'Too many requests' });
+        return;
+      }
+
       const authHeader = req.headers['authorization'] as string | undefined;
       if (!validateAuth(authHeader, authToken)) {
-        log(`Auth failure from ${req.socket.remoteAddress}`);
+        rateLimiter.record(source);
+        log(`Auth failure from ${source}`);
         sendJson(res, 401, { error: 'Unauthorized' });
         return;
       }
@@ -166,6 +213,15 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
         return;
       }
 
+      // Short-circuit: skip PostToolUse if PreToolUse denied this tool
+      if (event === 'PostToolUse' && input.tool_name && input.session_id) {
+        if (denyCache.isDenied(input.session_id, input.tool_name)) {
+          log(`PostToolUse skipped — PreToolUse denied for ${input.tool_name}`);
+          sendJson(res, 200, {});
+          return;
+        }
+      }
+
       log(`Hook: ${eventName} (${handlers.length} handler${handlers.length > 1 ? 's' : ''})`);
 
       try {
@@ -194,7 +250,6 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
 
           // Track cost for LLM handlers
           if (result.usage && result.cost_usd !== undefined && result.cost_usd > 0) {
-            // Find the handler config to get model info
             const handlerConfig = (handlers as HandlerConfig[]).find(h => h.id === result.id);
             if (handlerConfig && handlerConfig.type === 'llm') {
               const llmConfig = handlerConfig as import('./types.js').LLMHandlerConfig;
@@ -208,6 +263,25 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
                 batched: !!llmConfig.batchGroup,
               });
             }
+          }
+        }
+
+        // Short-circuit: if PreToolUse had a deny, record it in the cache
+        if (event === 'PreToolUse' && input.tool_name && input.session_id) {
+          const hasDeny = results.some(r => {
+            if (!r.ok || !r.output || typeof r.output !== 'object') return false;
+            const out = r.output as Record<string, unknown>;
+            // Check hookSpecificOutput.permissionDecision === 'deny'
+            if (out.hookSpecificOutput && typeof out.hookSpecificOutput === 'object') {
+              const hso = out.hookSpecificOutput as Record<string, unknown>;
+              if (hso.permissionDecision === 'deny') return true;
+            }
+            // Check decision === 'block'
+            if (out.decision === 'block') return true;
+            return false;
+          });
+          if (hasDeny) {
+            denyCache.recordDeny(input.session_id, input.tool_name);
           }
         }
 
@@ -261,6 +335,55 @@ export function startDaemon(manifest: Manifest, metrics: MetricsCollector, optio
           () => {
             try {
               const newManifest = loadCompositeManifest();
+
+              // Diff handlers: find removed, added, and changed handlers
+              const oldIds = new Set<string>();
+              const oldHandlerMap = new Map<string, HandlerConfig>();
+              for (const handlers of Object.values(ctx.manifest.handlers)) {
+                if (!handlers) continue;
+                for (const h of handlers) {
+                  oldIds.add(h.id);
+                  oldHandlerMap.set(h.id, h);
+                }
+              }
+
+              const newIds = new Set<string>();
+              const newHandlerMap = new Map<string, HandlerConfig>();
+              for (const handlers of Object.values(newManifest.handlers)) {
+                if (!handlers) continue;
+                for (const h of handlers) {
+                  newIds.add(h.id);
+                  newHandlerMap.set(h.id, h);
+                }
+              }
+
+              // Removed handlers: clean up their state
+              for (const id of oldIds) {
+                if (!newIds.has(id)) {
+                  cleanupHandlerState(id);
+                  log(`  Handler removed: ${id}`);
+                }
+              }
+
+              // Added handlers: initialize fresh state (happens automatically on first use)
+              for (const id of newIds) {
+                if (!oldIds.has(id)) {
+                  log(`  Handler added: ${id}`);
+                }
+              }
+
+              // Changed handlers with sessionIsolation: reset state
+              for (const id of newIds) {
+                if (oldIds.has(id)) {
+                  const newH = newHandlerMap.get(id)!;
+                  const oldH = oldHandlerMap.get(id)!;
+                  if (newH.sessionIsolation && JSON.stringify(oldH) !== JSON.stringify(newH)) {
+                    cleanupHandlerState(id);
+                    log(`  Handler changed (session-isolated, state reset): ${id}`);
+                  }
+                }
+              }
+
               ctx.manifest = newManifest;
               log('Manifest reloaded successfully');
             } catch (err) {
@@ -281,6 +404,7 @@ export function startDaemon(manifest: Manifest, metrics: MetricsCollector, optio
     const shutdown = () => {
       log('Shutting down...');
       stopWatcher(ctx.watcher ?? null);
+      if (ctx.cleanupInterval) clearInterval(ctx.cleanupInterval);
       ctx.server.close(() => {
         try {
           if (existsSync(PID_FILE)) unlinkSync(PID_FILE);

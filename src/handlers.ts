@@ -6,6 +6,7 @@ import { resolve } from 'path';
 import { DEFAULT_HANDLER_TIMEOUT, MAX_CONSECUTIVE_FAILURES } from './constants.js';
 import { evaluateFilter } from './filter.js';
 import { executeLLMHandlersBatched } from './llm.js';
+import { resolveExecutionOrder } from './deps.js';
 import type { HandlerConfig, ScriptHandlerConfig, InlineHandlerConfig, LLMHandlerConfig, HandlerResult, HandlerState, HookEvent, HookInput, PrefetchContext } from './types.js';
 
 /** Runtime state per handler ID */
@@ -30,6 +31,11 @@ export function getHandlerStates(): Map<string, HandlerState> {
   return new Map(handlerStates);
 }
 
+/** Clean up state for a specific handler ID (used during manifest reload diffs). */
+export function cleanupHandlerState(handlerId: string): void {
+  handlerStates.delete(handlerId);
+}
+
 /**
  * Reset handler states for handlers that have sessionIsolation: true.
  * Called on SessionStart events.
@@ -49,9 +55,10 @@ export function resetSessionIsolatedHandlers(handlers: HandlerConfig[]): void {
 }
 
 /**
- * Execute all handlers for an event in parallel.
- * Returns merged results array.
- * Optionally accepts pre-fetched context for LLM prompt rendering.
+ * Execute all handlers for an event, respecting dependency order.
+ * Handlers are grouped into "waves" via topological sort.
+ * Within each wave, handlers run in parallel.
+ * Outputs from previous waves are available to dependent handlers via _handlerOutputs.
  */
 export async function executeHandlers(
   _event: HookEvent,
@@ -59,13 +66,11 @@ export async function executeHandlers(
   handlers: HandlerConfig[],
   context?: PrefetchContext
 ): Promise<HandlerResult[]> {
-  // Separate LLM handlers from script/inline, applying shared pre-checks
-  const llmHandlers: LLMHandlerConfig[] = [];
-  const otherPromises: Promise<HandlerResult>[] = [];
+  // Pre-check: filter out disabled/auto-disabled/filtered handlers before dep resolution
+  const eligible: HandlerConfig[] = [];
   const skippedResults: HandlerResult[] = [];
 
   for (const handler of handlers) {
-    // Skip disabled handlers (both manifest-disabled and auto-disabled)
     if (handler.enabled === false) {
       skippedResults.push({ id: handler.id, ok: true, output: undefined, duration_ms: 0 });
       continue;
@@ -82,7 +87,6 @@ export async function executeHandlers(
       continue;
     }
 
-    // Evaluate keyword filter before execution
     if (handler.filter) {
       const inputStr = JSON.stringify(input);
       if (!evaluateFilter(handler.filter, inputStr)) {
@@ -97,53 +101,92 @@ export async function executeHandlers(
       }
     }
 
-    state.totalFires++;
-
-    if (handler.type === 'llm') {
-      llmHandlers.push(handler);
-    } else {
-      // Execute script/inline handlers in parallel
-      otherPromises.push(executeOtherHandler(handler, input));
-    }
+    eligible.push(handler);
   }
 
-  // Execute script/inline handlers in parallel
-  const otherResults = otherPromises.length > 0
-    ? await Promise.all(otherPromises)
-    : [];
-
-  // Execute LLM handlers with batching (graceful — never crashes)
-  let llmResults: HandlerResult[] = [];
-  if (llmHandlers.length > 0) {
-    try {
-      llmResults = await executeLLMHandlersBatched(llmHandlers, input, context ?? {});
-    } catch (err) {
-      // Graceful degradation: if LLM execution entirely fails, return error results
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      llmResults = llmHandlers.map(h => ({
-        id: h.id,
-        ok: false,
-        error: `LLM execution failed: ${errorMsg}`,
-        duration_ms: 0,
-      }));
-    }
+  if (eligible.length === 0) {
+    return skippedResults;
   }
 
-  // Update failure tracking for all executed results
-  for (const result of [...otherResults, ...llmResults]) {
-    const state = getState(result.id);
-    if (result.ok) {
-      state.consecutiveFailures = 0;
-    } else {
-      state.consecutiveFailures++;
-      state.totalErrors++;
-      if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        state.disabled = true;
+  // Resolve execution order into waves
+  let waves: HandlerConfig[][];
+  try {
+    waves = resolveExecutionOrder(eligible);
+  } catch {
+    // If dep resolution fails, fall back to flat parallel execution
+    waves = [eligible];
+  }
+
+  const allResults: HandlerResult[] = [...skippedResults];
+  const handlerOutputs: Record<string, unknown> = {};
+
+  for (const wave of waves) {
+    // Mark totalFires for all handlers in this wave
+    for (const handler of wave) {
+      getState(handler.id).totalFires++;
+    }
+
+    // Build input with _handlerOutputs from previous waves
+    const waveInput: HookInput = Object.keys(handlerOutputs).length > 0
+      ? { ...input, _handlerOutputs: handlerOutputs }
+      : input;
+
+    // Separate LLM from script/inline within this wave
+    const llmHandlers: LLMHandlerConfig[] = [];
+    const otherPromises: Promise<HandlerResult>[] = [];
+
+    for (const handler of wave) {
+      if (handler.type === 'llm') {
+        llmHandlers.push(handler);
+      } else {
+        otherPromises.push(executeOtherHandler(handler, waveInput));
       }
     }
+
+    // Execute script/inline handlers in parallel
+    const otherResults = otherPromises.length > 0
+      ? await Promise.all(otherPromises)
+      : [];
+
+    // Execute LLM handlers with batching (scoped to this wave)
+    let llmResults: HandlerResult[] = [];
+    if (llmHandlers.length > 0) {
+      try {
+        llmResults = await executeLLMHandlersBatched(llmHandlers, waveInput, context ?? {}, input.session_id);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        llmResults = llmHandlers.map(h => ({
+          id: h.id,
+          ok: false,
+          error: `LLM execution failed: ${errorMsg}`,
+          duration_ms: 0,
+        }));
+      }
+    }
+
+    const waveResults = [...otherResults, ...llmResults];
+
+    // Update failure tracking and collect outputs for dependents
+    for (const result of waveResults) {
+      const state = getState(result.id);
+      if (result.ok) {
+        state.consecutiveFailures = 0;
+      } else {
+        state.consecutiveFailures++;
+        state.totalErrors++;
+        if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          state.disabled = true;
+        }
+      }
+
+      // Store output for downstream handlers
+      handlerOutputs[result.id] = result.output;
+    }
+
+    allResults.push(...waveResults);
   }
 
-  return [...skippedResults, ...otherResults, ...llmResults];
+  return allResults;
 }
 
 /**

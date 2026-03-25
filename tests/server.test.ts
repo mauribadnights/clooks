@@ -104,8 +104,17 @@ describe('server', () => {
     resetHandlerStates();
   });
 
-  it('GET /health returns 200 with status ok', async () => {
+  it('GET /health returns 200 with minimal status ok', async () => {
     const res = await httpRequest(port, 'GET', '/health');
+
+    expect(res.status).toBe(200);
+    expect(res.data.status).toBe('ok');
+    // Public /health is minimal — no uptime or handler count
+    expect(Object.keys(res.data)).toEqual(['status']);
+  });
+
+  it('GET /health/detail returns 200 with full health info', async () => {
+    const res = await httpRequest(port, 'GET', '/health/detail');
 
     expect(res.status).toBe(200);
     expect(res.data.status).toBe('ok');
@@ -259,6 +268,39 @@ describe('server with auth token', () => {
     const res = await httpRequest(port, 'GET', '/health');
     expect(res.status).toBe(200);
     expect(res.data.status).toBe('ok');
+  });
+
+  it('GET /health/detail requires auth when token configured', async () => {
+    const res = await httpRequest(port, 'GET', '/health/detail');
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /health/detail with auth token returns full info', async () => {
+    const res = await new Promise<{ status: number; data: Record<string, unknown> }>((resolve, reject) => {
+      const req = request(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/health/detail',
+          method: 'GET',
+          headers: { Authorization: `Bearer ${authToken}` },
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+          res.on('end', () => {
+            try { resolve({ status: res.statusCode ?? 0, data: JSON.parse(data) }); }
+            catch { resolve({ status: res.statusCode ?? 0, data: { raw: data } }); }
+          });
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    expect(res.status).toBe(200);
+    expect(res.data.status).toBe('ok');
+    expect(res.data).toHaveProperty('uptime');
+    expect(res.data).toHaveProperty('handlers_loaded');
   });
 
   it('POST without auth token returns 401', async () => {

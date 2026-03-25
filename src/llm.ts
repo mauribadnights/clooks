@@ -230,17 +230,22 @@ function splitUsage(total: TokenUsage, count: number): TokenUsage {
 export async function executeLLMHandlersBatched(
   handlers: LLMHandlerConfig[],
   input: HookInput,
-  context: PrefetchContext
+  context: PrefetchContext,
+  sessionId?: string
 ): Promise<HandlerResult[]> {
-  // Group by batchGroup
+  // Group by batchGroup, scoped by sessionId to prevent cross-session batching
   const grouped = new Map<string, LLMHandlerConfig[]>();
   const ungrouped: LLMHandlerConfig[] = [];
 
   for (const handler of handlers) {
     if (handler.batchGroup) {
-      const existing = grouped.get(handler.batchGroup) ?? [];
+      // Scope the batch key by sessionId so different sessions never batch together
+      const batchKey = sessionId
+        ? `${handler.batchGroup}:${sessionId}`
+        : handler.batchGroup;
+      const existing = grouped.get(batchKey) ?? [];
       existing.push(handler);
-      grouped.set(handler.batchGroup, existing);
+      grouped.set(batchKey, existing);
     } else {
       ungrouped.push(handler);
     }
