@@ -3,41 +3,41 @@
     "version": "0.1.0",
     "node": "v24.4.1",
     "platform": "darwin arm64",
-    "date": "2026-03-24T23:05:13.192Z"
+    "date": "2026-03-25T07:46:21.666Z"
   },
   "coldStart": {
     "iterations": 50,
     "command": {
-      "mean": 23.04,
-      "median": 22.94,
-      "p95": 24.24,
-      "p99": 25.01,
-      "min": 21.93,
-      "max": 25.01
+      "mean": 22.46,
+      "median": 22.42,
+      "p95": 23.8,
+      "p99": 24.28,
+      "min": 21.25,
+      "max": 24.28
     },
     "http": {
-      "mean": 0.22,
-      "median": 0.2,
-      "p95": 0.33,
-      "p99": 0.62,
+      "mean": 0.23,
+      "median": 0.19,
+      "p95": 0.32,
+      "p99": 0.88,
       "min": 0.18,
-      "max": 0.62
+      "max": 0.88
     },
-    "speedup": 102.4
+    "speedup": 99.5
   },
   "simulatedSession": {
     "totalHandlerInvocations": 120,
     "totalEventFires": 67,
-    "commandMs": 2780.4,
+    "commandMs": 2683.6,
     "httpMs": 15.8,
-    "timeSavedMs": 2764.6,
+    "timeSavedMs": 2667.8,
     "pctSaved": 99
   },
   "concurrentHandlers": {
     "handlerCount": 5,
     "delayPerHandlerMs": 50,
-    "sequentialMs": 377.7,
-    "parallelMs": 84.5,
+    "sequentialMs": 374.8,
+    "parallelMs": 83.9,
     "speedup": 4.5
   }
 }

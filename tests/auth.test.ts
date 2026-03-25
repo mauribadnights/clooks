@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
-import { generateAuthToken, validateAuth } from '../src/auth.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { stringify as stringifyYaml, parse as parseYaml } from 'yaml';
+import { generateAuthToken, validateAuth, rotateToken } from '../src/auth.js';
 
 describe('generateAuthToken', () => {
   it('generates a 32-character hex string', () => {
@@ -55,5 +59,92 @@ describe('validateAuth', () => {
     const a = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     const b = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
     expect(validateAuth(a, b)).toBe(false);
+  });
+});
+
+describe('rotateToken', () => {
+  let tmpDir: string;
+  let manifestPath: string;
+  let settingsDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'clooks-auth-rotate-'));
+    manifestPath = join(tmpDir, 'manifest.yaml');
+    settingsDir = tmpDir;
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('generates new token and updates manifest file', () => {
+    const manifest = {
+      handlers: {
+        PreToolUse: [{ id: 'guard', type: 'script', command: 'echo ok' }],
+      },
+      settings: { port: 7890 },
+    };
+    writeFileSync(manifestPath, stringifyYaml(manifest), 'utf-8');
+
+    const newToken = rotateToken({ manifestPath, settingsDir });
+
+    expect(newToken).toHaveLength(32);
+    expect(newToken).toMatch(/^[0-9a-f]{32}$/);
+
+    // Verify manifest was updated
+    const updatedRaw = readFileSync(manifestPath, 'utf-8');
+    const updated = parseYaml(updatedRaw);
+    expect(updated.settings.authToken).toBe(newToken);
+  });
+
+  it('updates settings.json Authorization headers for HTTP hooks', () => {
+    // Create manifest
+    const manifest = { handlers: {}, settings: {} };
+    writeFileSync(manifestPath, stringifyYaml(manifest), 'utf-8');
+
+    // Create settings.json with an HTTP hook pointing at localhost
+    const settingsPath = join(settingsDir, 'settings.json');
+    const settings = {
+      hooks: {
+        PreToolUse: [
+          {
+            hooks: [
+              {
+                type: 'http',
+                url: 'http://localhost:7890/hook',
+                headers: { Authorization: 'Bearer old-token' },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+
+    const newToken = rotateToken({ manifestPath, settingsDir });
+
+    // Verify settings.json was updated
+    const updatedSettings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    const hook = updatedSettings.hooks.PreToolUse[0].hooks[0];
+    expect(hook.headers.Authorization).toBe(`Bearer ${newToken}`);
+  });
+
+  it('throws when manifest does not exist', () => {
+    expect(() => rotateToken({ manifestPath: join(tmpDir, 'nonexistent.yaml'), settingsDir })).toThrow(
+      'Manifest not found',
+    );
+  });
+
+  it('preserves comment header in manifest', () => {
+    const yamlContent = '# My clooks config\n# Version 2\n\n' + stringifyYaml({
+      handlers: {},
+      settings: { port: 7890 },
+    });
+    writeFileSync(manifestPath, yamlContent, 'utf-8');
+
+    rotateToken({ manifestPath, settingsDir });
+
+    const updated = readFileSync(manifestPath, 'utf-8');
+    expect(updated.startsWith('# My clooks config\n# Version 2\n')).toBe(true);
   });
 });

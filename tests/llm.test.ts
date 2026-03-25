@@ -228,6 +228,78 @@ describe('executeLLMHandlersBatched', () => {
     }
   });
 
+  it('sessionId scopes batch groups to prevent cross-session batching', async () => {
+    // When two calls pass different sessionIds, handlers with the same batchGroup
+    // should NOT be merged into a single API call.
+    // We test this by calling executeLLMHandlersBatched twice with different sessionIds
+    // and verifying that each call produces its own API call.
+
+    mockCreate.mockResolvedValue({
+      content: [{ text: '{"s1": "session-1-result"}' }],
+      usage: { input_tokens: 50, output_tokens: 25 },
+    });
+
+    // Call 1: session A with one handler in batchGroup "shared"
+    const handlersA = [
+      makeHandler({ id: 's1', batchGroup: 'shared', prompt: 'Session A task' }),
+    ];
+    const resultsA = await executeLLMHandlersBatched(
+      handlersA,
+      makeInput({ session_id: 'session-A' }),
+      emptyContext,
+      'session-A',
+    );
+
+    mockCreate.mockResolvedValue({
+      content: [{ text: '{"s2": "session-2-result"}' }],
+      usage: { input_tokens: 50, output_tokens: 25 },
+    });
+
+    // Call 2: session B with one handler in the same batchGroup "shared"
+    const handlersB = [
+      makeHandler({ id: 's2', batchGroup: 'shared', prompt: 'Session B task' }),
+    ];
+    const resultsB = await executeLLMHandlersBatched(
+      handlersB,
+      makeInput({ session_id: 'session-B' }),
+      emptyContext,
+      'session-B',
+    );
+
+    // Each call should have made its own API call (2 total)
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(resultsA).toHaveLength(1);
+    expect(resultsB).toHaveLength(1);
+    expect(resultsA[0].id).toBe('s1');
+    expect(resultsB[0].id).toBe('s2');
+  });
+
+  it('same sessionId batches handlers with same batchGroup together', async () => {
+    mockCreate.mockResolvedValue({
+      content: [{ text: '{"h1": "r1", "h2": "r2"}' }],
+      usage: { input_tokens: 100, output_tokens: 50 },
+    });
+
+    const handlers = [
+      makeHandler({ id: 'h1', batchGroup: 'grp', prompt: 'Task 1' }),
+      makeHandler({ id: 'h2', batchGroup: 'grp', prompt: 'Task 2' }),
+    ];
+
+    const results = await executeLLMHandlersBatched(
+      handlers,
+      makeInput(),
+      emptyContext,
+      'same-session',
+    );
+
+    // Both handlers should be batched into a single API call
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(results).toHaveLength(2);
+    const sentPrompt = mockCreate.mock.calls[0][0].messages[0].content;
+    expect(sentPrompt).toContain('TASK "h1"');
+    expect(sentPrompt).toContain('TASK "h2"');
+  });
+
   it('failed JSON parse returns raw text to all handlers in group', async () => {
     mockCreate.mockResolvedValue({
       content: [{ text: 'This is not valid JSON at all' }],
