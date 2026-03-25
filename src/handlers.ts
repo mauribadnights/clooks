@@ -1,6 +1,6 @@
 // clooks hook handlers — execution engine
 
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { pathToFileURL } from 'url';
 import { resolve } from 'path';
 import { DEFAULT_HANDLER_TIMEOUT, MAX_CONSECUTIVE_FAILURES } from './constants.js';
@@ -8,6 +8,48 @@ import { evaluateFilter } from './filter.js';
 import { executeLLMHandlersBatched } from './llm.js';
 import { resolveExecutionOrder } from './deps.js';
 import type { HandlerConfig, ScriptHandlerConfig, InlineHandlerConfig, LLMHandlerConfig, HandlerResult, HandlerState, HookEvent, HookInput, PrefetchContext } from './types.js';
+
+/**
+ * Resolve the user's login shell PATH once at startup.
+ * When the daemon runs under launchd/systemd, it inherits a minimal PATH
+ * that may not include /opt/homebrew/bin, pyenv shims, nvm dirs, etc.
+ * This ensures script handlers see the same PATH as the user's terminal.
+ */
+let _shellEnv: Record<string, string> | null = null;
+
+function getShellEnv(): Record<string, string> {
+  if (_shellEnv) return _shellEnv;
+  try {
+    const shell = process.env.SHELL || '/bin/sh';
+    const output = execSync(`${shell} -ilc 'env'`, {
+      timeout: 5000,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const env: Record<string, string> = {};
+    for (const line of output.split('\n')) {
+      const idx = line.indexOf('=');
+      if (idx > 0) {
+        env[line.slice(0, idx)] = line.slice(idx + 1);
+      }
+    }
+    // Merge: shell env as base, but keep daemon-specific vars (like ANTHROPIC_API_KEY)
+    _shellEnv = { ...env, ...process.env } as Record<string, string>;
+    // PATH specifically: prefer the shell's PATH (has homebrew, pyenv, nvm, etc.)
+    if (env.PATH) {
+      _shellEnv.PATH = env.PATH;
+    }
+  } catch {
+    // Fallback: just use process.env as-is
+    _shellEnv = process.env as Record<string, string>;
+  }
+  return _shellEnv;
+}
+
+/** Reset cached shell env (for testing) */
+export function resetShellEnv(): void {
+  _shellEnv = null;
+}
 
 /** Match handler agent field against current session agent (case-insensitive, comma-separated) */
 function matchAgent(pattern: string, currentAgent: string): boolean {
@@ -328,6 +370,7 @@ export function executeScriptHandler(handler: HandlerConfig, input: HookInput): 
     const child = spawn('sh', ['-c', h.command], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout,
+      env: getShellEnv(),
     });
 
     let stdout = '';
