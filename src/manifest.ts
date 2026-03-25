@@ -116,9 +116,17 @@ export function validateManifest(manifest: Manifest): void {
 /**
  * Create a default commented example manifest.yaml in CONFIG_DIR.
  */
-export function createDefaultManifest(): string {
+export function createDefaultManifest(authToken?: string): string {
   if (!existsSync(CONFIG_DIR)) {
     mkdirSync(CONFIG_DIR, { recursive: true });
+  }
+
+  const settings: Manifest['settings'] = {
+    port: 7890,
+    logLevel: 'info',
+  };
+  if (authToken) {
+    settings.authToken = authToken;
   }
 
   const example: Manifest = {
@@ -133,10 +141,7 @@ export function createDefaultManifest(): string {
         },
       ],
     },
-    settings: {
-      port: 7890,
-      logLevel: 'info',
-    },
+    settings,
   };
 
   const yamlStr =

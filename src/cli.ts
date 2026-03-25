@@ -8,6 +8,7 @@ import { MetricsCollector } from './metrics.js';
 import { startDaemon, stopDaemon, isDaemonRunning, startDaemonBackground } from './server.js';
 import { migrate, restore } from './migrate.js';
 import { runDoctor } from './doctor.js';
+import { generateAuthToken } from './auth.js';
 import { DEFAULT_PORT, CONFIG_DIR, PID_FILE } from './constants.js';
 import { existsSync, readFileSync, mkdirSync } from 'fs';
 
@@ -16,14 +17,16 @@ const program = new Command();
 program
   .name('clooks')
   .description('Persistent hook runtime for Claude Code')
-  .version('0.2.0');
+  .version('0.2.1');
 
 // --- start ---
 program
   .command('start')
   .description('Start the clooks daemon')
   .option('-f, --foreground', 'Run in foreground (default: background/detached)')
-  .action(async (opts: { foreground?: boolean }) => {
+  .option('--no-watch', 'Disable file watching for manifest changes')
+  .action(async (opts: { foreground?: boolean; watch?: boolean }) => {
+    const noWatch = opts.watch === false;
     if (!opts.foreground) {
       // Background mode: check if already running, then spawn detached
       if (isDaemonRunning()) {
@@ -37,7 +40,7 @@ program
       }
 
       console.log('Starting clooks daemon in background...');
-      startDaemonBackground();
+      startDaemonBackground({ noWatch });
       // Give it a moment to start
       await new Promise((r) => setTimeout(r, 500));
       if (isDaemonRunning()) {
@@ -58,7 +61,7 @@ program
       const handlerCount = Object.values(manifest.handlers)
         .reduce((sum, arr) => sum + (arr?.length ?? 0), 0);
 
-      await startDaemon(manifest, metrics);
+      await startDaemon(manifest, metrics, { noWatch });
       console.log(`clooks daemon running on 127.0.0.1:${port} (${handlerCount} handler${handlerCount !== 1 ? 's' : ''})`);
     } catch (err) {
       console.error('Failed to start daemon:', err instanceof Error ? err.message : err);
@@ -226,8 +229,10 @@ program
     if (!existsSync(CONFIG_DIR)) {
       mkdirSync(CONFIG_DIR, { recursive: true });
     }
-    const path = createDefaultManifest();
+    const token = generateAuthToken();
+    const path = createDefaultManifest(token);
     console.log(`Created: ${path}`);
+    console.log(`Auth token: ${token}`);
     console.log('Edit this file to configure your hook handlers.');
   });
 

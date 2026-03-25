@@ -46,6 +46,7 @@ export interface LLMHandlerConfig {
   filter?: string;           // Keyword filter (applies to all handler types)
   timeout?: number;          // ms, default 30000 for LLM
   enabled?: boolean;
+  sessionIsolation?: boolean; // Reset handler state on SessionStart
 }
 
 /** Script handler config */
@@ -56,6 +57,7 @@ export interface ScriptHandlerConfig {
   filter?: string;
   timeout?: number;
   enabled?: boolean;
+  sessionIsolation?: boolean; // Reset handler state on SessionStart
 }
 
 /** Inline handler config */
@@ -66,6 +68,7 @@ export interface InlineHandlerConfig {
   filter?: string;
   timeout?: number;
   enabled?: boolean;
+  sessionIsolation?: boolean; // Reset handler state on SessionStart
 }
 
 /** Union of all handler configs */
@@ -89,6 +92,7 @@ export interface Manifest {
     port?: number;
     logLevel?: 'debug' | 'info' | 'warn' | 'error';
     anthropicApiKey?: string;  // Can also use ANTHROPIC_API_KEY env var
+    authToken?: string;        // Token for authenticating HTTP requests
   };
 }
 

@@ -2,11 +2,15 @@
 
 import { createServer as httpCreateServer, type IncomingMessage, type ServerResponse, type Server } from 'http';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, mkdirSync } from 'fs';
+import type { FSWatcher } from 'fs';
 import { spawn } from 'child_process';
-import { executeHandlers } from './handlers.js';
+import { executeHandlers, resetSessionIsolatedHandlers } from './handlers.js';
 import { prefetchContext } from './prefetch.js';
 import { MetricsCollector } from './metrics.js';
-import { DEFAULT_PORT, PID_FILE, LOG_FILE, CONFIG_DIR, HOOK_EVENTS } from './constants.js';
+import { startWatcher, stopWatcher } from './watcher.js';
+import { validateAuth } from './auth.js';
+import { DEFAULT_PORT, PID_FILE, LOG_FILE, CONFIG_DIR, HOOK_EVENTS, MANIFEST_PATH } from './constants.js';
+import { loadManifest } from './manifest.js';
 import type { Manifest, HookEvent, HookInput, HandlerResult, HandlerConfig, PrefetchContext, CostEntry } from './types.js';
 
 function log(msg: string): void {
@@ -86,6 +90,7 @@ export interface ServerContext {
   metrics: MetricsCollector;
   startTime: number;
   manifest: Manifest;
+  watcher?: FSWatcher;
 }
 
 /**
@@ -93,23 +98,35 @@ export interface ServerContext {
  */
 export function createServer(manifest: Manifest, metrics: MetricsCollector): ServerContext {
   const startTime = Date.now();
+  const ctx: ServerContext = { server: null as unknown as Server, metrics, startTime, manifest };
+  const authToken = manifest.settings?.authToken ?? '';
 
   const server = httpCreateServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? '/';
     const method = req.method ?? 'GET';
 
-    // Health check endpoint
+    // Health check endpoint — no auth required for monitoring
     if (method === 'GET' && url === '/health') {
-      const handlerCount = Object.values(manifest.handlers)
+      const handlerCount = Object.values(ctx.manifest.handlers)
         .reduce((sum, arr) => sum + (arr?.length ?? 0), 0);
 
       sendJson(res, 200, {
         status: 'ok',
         uptime: Math.floor((Date.now() - startTime) / 1000),
         handlers_loaded: handlerCount,
-        port: manifest.settings?.port ?? DEFAULT_PORT,
+        port: ctx.manifest.settings?.port ?? DEFAULT_PORT,
       });
       return;
+    }
+
+    // Auth check for all POST requests
+    if (method === 'POST' && authToken) {
+      const authHeader = req.headers['authorization'] as string | undefined;
+      if (!validateAuth(authHeader, authToken)) {
+        log(`Auth failure from ${req.socket.remoteAddress}`);
+        sendJson(res, 401, { error: 'Unauthorized' });
+        return;
+      }
     }
 
     // Hook endpoint: POST /hooks/:eventName
@@ -123,7 +140,16 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
       }
 
       const event = eventName as HookEvent;
-      const handlers = manifest.handlers[event] ?? [];
+
+      // On SessionStart, reset session-isolated handlers across ALL events
+      if (event === 'SessionStart') {
+        const allHandlers = Object.values(ctx.manifest.handlers)
+          .flat()
+          .filter((h): h is HandlerConfig => h != null);
+        resetSessionIsolatedHandlers(allHandlers);
+      }
+
+      const handlers = ctx.manifest.handlers[event] ?? [];
 
       if (handlers.length === 0) {
         sendJson(res, 200, {});
@@ -145,8 +171,8 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
       try {
         // Pre-fetch shared context if configured
         let context: PrefetchContext | undefined;
-        if (manifest.prefetch && manifest.prefetch.length > 0) {
-          context = await prefetchContext(manifest.prefetch, input);
+        if (ctx.manifest.prefetch && ctx.manifest.prefetch.length > 0) {
+          context = await prefetchContext(ctx.manifest.prefetch, input);
         }
 
         const results = await executeHandlers(event, input, handlers as HandlerConfig[], context);
@@ -198,13 +224,14 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
     sendJson(res, 404, { error: 'Not found' });
   });
 
-  return { server, metrics, startTime, manifest };
+  ctx.server = server;
+  return ctx;
 }
 
 /**
  * Start the daemon: bind the server and write PID file.
  */
-export function startDaemon(manifest: Manifest, metrics: MetricsCollector): Promise<ServerContext> {
+export function startDaemon(manifest: Manifest, metrics: MetricsCollector, options?: { noWatch?: boolean }): Promise<ServerContext> {
   return new Promise((resolve, reject) => {
     const ctx = createServer(manifest, metrics);
     const port = manifest.settings?.port ?? DEFAULT_PORT;
@@ -226,6 +253,19 @@ export function startDaemon(manifest: Manifest, metrics: MetricsCollector): Prom
       }
       writeFileSync(PID_FILE, String(process.pid), 'utf-8');
 
+      // Start file watcher unless disabled
+      if (!options?.noWatch) {
+        ctx.watcher = startWatcher(MANIFEST_PATH, () => {
+          try {
+            const newManifest = loadManifest();
+            ctx.manifest = newManifest;
+            log('Manifest reloaded');
+          } catch (err) {
+            log(`Manifest reload failed: ${err instanceof Error ? err.message : err}`);
+          }
+        }) ?? undefined;
+      }
+
       log(`Daemon started on 127.0.0.1:${port} (pid ${process.pid})`);
       resolve(ctx);
     });
@@ -233,6 +273,7 @@ export function startDaemon(manifest: Manifest, metrics: MetricsCollector): Prom
     // Graceful shutdown
     const shutdown = () => {
       log('Shutting down...');
+      stopWatcher(ctx.watcher ?? null);
       ctx.server.close(() => {
         try {
           if (existsSync(PID_FILE)) unlinkSync(PID_FILE);
@@ -318,8 +359,12 @@ export function isDaemonRunning(): boolean {
 /**
  * Start daemon as a detached background process.
  */
-export function startDaemonBackground(): void {
-  const child = spawn(process.execPath, [process.argv[1], 'start', '--foreground'], {
+export function startDaemonBackground(options?: { noWatch?: boolean }): void {
+  const args = [process.argv[1], 'start', '--foreground'];
+  if (options?.noWatch) {
+    args.push('--no-watch');
+  }
+  const child = spawn(process.execPath, args, {
     detached: true,
     stdio: 'ignore',
   });

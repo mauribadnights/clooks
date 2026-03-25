@@ -1,6 +1,6 @@
 {
   "name": "@mauribadnights/clooks",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Persistent hook runtime for Claude Code — eliminates process spawning overhead and gives you observability",
   "bin": {
     "clooks": "./dist/cli.js"

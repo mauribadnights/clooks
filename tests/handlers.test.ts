@@ -4,6 +4,7 @@ import {
   executeScriptHandler,
   resetHandlerStates,
   getHandlerStates,
+  resetSessionIsolatedHandlers,
 } from '../src/handlers.js';
 import type { HandlerConfig, HookInput } from '../src/types.js';
 
@@ -211,6 +212,69 @@ describe('handlers', () => {
 
       resetHandlerStates();
       expect(getHandlerStates().size).toBe(0);
+    });
+  });
+
+  describe('resetSessionIsolatedHandlers', () => {
+    it('resets state for handlers with sessionIsolation: true', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'isolated', type: 'script', command: 'exit 1', timeout: 1000, sessionIsolation: true },
+      ];
+
+      // Fail 3 times to trigger auto-disable
+      await executeHandlers('PostToolUse', makeInput(), handlers);
+      await executeHandlers('PostToolUse', makeInput(), handlers);
+      await executeHandlers('PostToolUse', makeInput(), handlers);
+
+      let states = getHandlerStates();
+      expect(states.get('isolated')!.disabled).toBe(true);
+      expect(states.get('isolated')!.consecutiveFailures).toBe(3);
+
+      // Reset session-isolated handlers
+      resetSessionIsolatedHandlers(handlers);
+
+      states = getHandlerStates();
+      expect(states.get('isolated')!.disabled).toBe(false);
+      expect(states.get('isolated')!.consecutiveFailures).toBe(0);
+      expect(states.get('isolated')!.totalFires).toBe(0);
+      expect(states.get('isolated')!.totalErrors).toBe(0);
+    });
+
+    it('does NOT reset handlers without sessionIsolation', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'persistent', type: 'script', command: 'exit 1', timeout: 1000 },
+      ];
+
+      await executeHandlers('PostToolUse', makeInput(), handlers);
+      await executeHandlers('PostToolUse', makeInput(), handlers);
+      await executeHandlers('PostToolUse', makeInput(), handlers);
+
+      let states = getHandlerStates();
+      expect(states.get('persistent')!.disabled).toBe(true);
+
+      // Reset session-isolated — this handler should NOT be reset
+      resetSessionIsolatedHandlers(handlers);
+
+      states = getHandlerStates();
+      expect(states.get('persistent')!.disabled).toBe(true);
+      expect(states.get('persistent')!.consecutiveFailures).toBe(3);
+    });
+
+    it('handles mix of isolated and non-isolated handlers', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'iso', type: 'script', command: 'exit 1', timeout: 1000, sessionIsolation: true },
+        { id: 'non-iso', type: 'script', command: 'exit 1', timeout: 1000 },
+      ];
+
+      await executeHandlers('PostToolUse', makeInput(), handlers);
+      await executeHandlers('PostToolUse', makeInput(), handlers);
+      await executeHandlers('PostToolUse', makeInput(), handlers);
+
+      resetSessionIsolatedHandlers(handlers);
+
+      const states = getHandlerStates();
+      expect(states.get('iso')!.disabled).toBe(false);
+      expect(states.get('non-iso')!.disabled).toBe(true);
     });
   });
 });

@@ -37,6 +37,9 @@ export async function runDoctor(): Promise<DiagnosticResult[]> {
   // 7. No stale PID file
   results.push(checkStalePid());
 
+  // 8. Auth token consistency (if configured)
+  results.push(checkAuthToken());
+
   return results;
 }
 
@@ -194,5 +197,64 @@ function checkStalePid(): DiagnosticResult {
     return { check: 'Stale PID', status: 'ok', message: `PID ${pid} is alive` };
   } catch {
     return { check: 'Stale PID', status: 'error', message: `Stale PID file: process ${pid} is dead. Remove ${PID_FILE} or run "clooks start".` };
+  }
+}
+
+function checkAuthToken(): DiagnosticResult {
+  try {
+    const manifest = loadManifest();
+    const authToken = manifest.settings?.authToken;
+
+    if (!authToken) {
+      return { check: 'Auth token', status: 'ok', message: 'No auth token configured (open access)' };
+    }
+
+    // Check that settings.json hooks include matching Authorization header
+    const candidates = [
+      join(homedir(), '.claude', 'settings.local.json'),
+      join(homedir(), '.claude', 'settings.json'),
+    ];
+
+    for (const path of candidates) {
+      if (!existsSync(path)) continue;
+
+      try {
+        const raw = readFileSync(path, 'utf-8');
+        const settings = JSON.parse(raw);
+
+        if (!settings.hooks) continue;
+
+        const expectedHeader = `Bearer ${authToken}`;
+        const httpHooks: Array<{ headers?: Record<string, string> }> = [];
+
+        for (const ruleGroups of Object.values(settings.hooks as Record<string, Array<{ hooks: Array<{ type: string; url?: string; headers?: Record<string, string> }> }>>)) {
+          for (const rule of ruleGroups) {
+            if (!Array.isArray(rule.hooks)) continue;
+            for (const hook of rule.hooks) {
+              if (hook.type === 'http' && hook.url?.includes(`localhost:${DEFAULT_PORT}`)) {
+                httpHooks.push(hook);
+              }
+            }
+          }
+        }
+
+        if (httpHooks.length === 0) {
+          return { check: 'Auth token', status: 'warn', message: 'Auth token set but no HTTP hooks found in settings.json' };
+        }
+
+        const missingAuth = httpHooks.filter(h => h.headers?.['Authorization'] !== expectedHeader);
+        if (missingAuth.length > 0) {
+          return { check: 'Auth token', status: 'error', message: `Auth token set but ${missingAuth.length} HTTP hook(s) missing matching Authorization header. Run "clooks migrate".` };
+        }
+
+        return { check: 'Auth token', status: 'ok', message: 'Auth token matches settings.json hook headers' };
+      } catch {
+        continue;
+      }
+    }
+
+    return { check: 'Auth token', status: 'warn', message: 'Auth token set but could not verify settings.json headers' };
+  } catch {
+    return { check: 'Auth token', status: 'ok', message: 'Could not load manifest for auth check' };
   }
 }

@@ -3,7 +3,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { CONFIG_DIR, SETTINGS_BACKUP, DEFAULT_PORT, HOOK_EVENTS } from './constants.js';
+import { CONFIG_DIR, SETTINGS_BACKUP, DEFAULT_PORT, HOOK_EVENTS, MANIFEST_PATH } from './constants.js';
+import { loadManifest } from './manifest.js';
 import type { Manifest, HandlerConfig, HookEvent } from './types.js';
 import { stringify as stringifyYaml } from 'yaml';
 
@@ -12,6 +13,7 @@ interface ClaudeHookEntry {
   command?: string;
   url?: string;
   timeout?: number;
+  headers?: Record<string, string>;
 }
 
 // Claude Code settings.json uses a NESTED hook format:
@@ -180,10 +182,14 @@ export function migrate(options?: MigratePathOptions): { manifestPath: string; s
 
     // Add HTTP hook
     if (hadHandlers > 0) {
-      hookEntries.push({
+      const httpHook: ClaudeHookEntry = {
         type: 'http',
         url: `http://localhost:${DEFAULT_PORT}/hooks/${eventName}`,
-      });
+      };
+      if (manifest.settings?.authToken) {
+        httpHook.headers = { Authorization: `Bearer ${manifest.settings.authToken}` };
+      }
+      hookEntries.push(httpHook);
     }
 
     if (hookEntries.length > 0) {

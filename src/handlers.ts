@@ -31,6 +31,24 @@ export function getHandlerStates(): Map<string, HandlerState> {
 }
 
 /**
+ * Reset handler states for handlers that have sessionIsolation: true.
+ * Called on SessionStart events.
+ */
+export function resetSessionIsolatedHandlers(handlers: HandlerConfig[]): void {
+  for (const handler of handlers) {
+    if (handler.sessionIsolation) {
+      const state = handlerStates.get(handler.id);
+      if (state) {
+        state.consecutiveFailures = 0;
+        state.disabled = false;
+        state.totalFires = 0;
+        state.totalErrors = 0;
+      }
+    }
+  }
+}
+
+/**
  * Execute all handlers for an event in parallel.
  * Returns merged results array.
  * Optionally accepts pre-fetched context for LLM prompt rendering.

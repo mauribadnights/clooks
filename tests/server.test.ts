@@ -208,3 +208,157 @@ describe('server', () => {
     expect(res.data).toEqual({});
   });
 });
+
+describe('server with auth token', () => {
+  let server: Server;
+  let port: number;
+  const authToken = 'test-auth-token-1234567890abcdef';
+
+  const manifest: Manifest = {
+    handlers: {
+      PostToolUse: [
+        {
+          id: 'auth-handler',
+          type: 'script',
+          command: 'echo \'{"additionalContext":"authenticated"}\'',
+          timeout: 5000,
+        },
+      ],
+    },
+    settings: { port: 0, logLevel: 'error', authToken },
+  };
+
+  beforeAll(
+    () =>
+      new Promise<void>((resolve) => {
+        resetHandlerStates();
+        const metrics = new MetricsCollector();
+        const ctx = createServer(manifest, metrics);
+        server = ctx.server;
+
+        server.listen(0, '127.0.0.1', () => {
+          const addr = server.address();
+          port = typeof addr === 'object' && addr ? addr.port : 0;
+          resolve();
+        });
+      }),
+  );
+
+  afterAll(
+    () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      }),
+  );
+
+  beforeEach(() => {
+    resetHandlerStates();
+  });
+
+  it('GET /health works without auth token', async () => {
+    const res = await httpRequest(port, 'GET', '/health');
+    expect(res.status).toBe(200);
+    expect(res.data.status).toBe('ok');
+  });
+
+  it('POST without auth token returns 401', async () => {
+    const input: HookInput = {
+      session_id: 'test',
+      transcript_path: '/tmp/t',
+      cwd: '/tmp',
+      permission_mode: 'default',
+      hook_event_name: 'PostToolUse',
+    };
+
+    const res = await httpRequest(port, 'POST', '/hooks/PostToolUse', input);
+    expect(res.status).toBe(401);
+    expect(res.data.error).toBe('Unauthorized');
+  });
+
+  it('POST with wrong auth token returns 401', async () => {
+    const input: HookInput = {
+      session_id: 'test',
+      transcript_path: '/tmp/t',
+      cwd: '/tmp',
+      permission_mode: 'default',
+      hook_event_name: 'PostToolUse',
+    };
+
+    const res = await httpRequestWithHeaders(port, 'POST', '/hooks/PostToolUse', input, {
+      Authorization: 'Bearer wrong-token-xxxxxxxxxxx',
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST with correct Bearer token succeeds', async () => {
+    const input: HookInput = {
+      session_id: 'test',
+      transcript_path: '/tmp/t',
+      cwd: '/tmp',
+      permission_mode: 'default',
+      hook_event_name: 'PostToolUse',
+    };
+
+    const res = await httpRequestWithHeaders(port, 'POST', '/hooks/PostToolUse', input, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    expect(res.status).toBe(200);
+    expect(res.data.additionalContext).toBe('authenticated');
+  });
+
+  it('POST with raw token (no Bearer prefix) succeeds', async () => {
+    const input: HookInput = {
+      session_id: 'test',
+      transcript_path: '/tmp/t',
+      cwd: '/tmp',
+      permission_mode: 'default',
+      hook_event_name: 'PostToolUse',
+    };
+
+    const res = await httpRequestWithHeaders(port, 'POST', '/hooks/PostToolUse', input, {
+      Authorization: authToken,
+    });
+    expect(res.status).toBe(200);
+  });
+});
+
+function httpRequestWithHeaders(
+  port: number,
+  method: string,
+  path: string,
+  body: unknown,
+  headers: Record<string, string>,
+): Promise<{ status: number; data: Record<string, unknown> }> {
+  return new Promise((resolve, reject) => {
+    const bodyStr = JSON.stringify(body);
+    const req = request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path,
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(bodyStr),
+          ...headers,
+        },
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk: Buffer) => {
+          data += chunk.toString();
+        });
+        res.on('end', () => {
+          try {
+            resolve({ status: res.statusCode ?? 0, data: JSON.parse(data) });
+          } catch {
+            resolve({ status: res.statusCode ?? 0, data: { raw: data } });
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.write(bodyStr);
+    req.end();
+  });
+}

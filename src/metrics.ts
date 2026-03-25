@@ -15,11 +15,21 @@ interface AggregatedStats {
 }
 
 export class MetricsCollector {
+  private static readonly MAX_ENTRIES = 1000;
   private entries: MetricEntry[] = [];
+  private ringIndex = 0;
+  private totalRecorded = 0;
 
-  /** Record a metric entry in memory and append to disk. */
+  /** Record a metric entry in memory (ring buffer) and append to disk. */
   record(entry: MetricEntry): void {
-    this.entries.push(entry);
+    // Ring buffer: overwrite oldest when full
+    if (this.entries.length < MetricsCollector.MAX_ENTRIES) {
+      this.entries.push(entry);
+    } else {
+      this.entries[this.ringIndex] = entry;
+      this.ringIndex = (this.ringIndex + 1) % MetricsCollector.MAX_ENTRIES;
+    }
+    this.totalRecorded++;
     try {
       const dir = dirname(METRICS_FILE);
       if (!existsSync(dir)) {
