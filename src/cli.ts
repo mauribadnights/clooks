@@ -13,6 +13,7 @@ import { installPlugin, uninstallPlugin, listPlugins, loadPlugins } from './plug
 import { syncSettings } from './sync.js';
 import { installService, uninstallService, isServiceInstalled, getServiceStatus } from './service.js';
 import { DEFAULT_PORT, CONFIG_DIR, PID_FILE, PLUGIN_MANIFEST_NAME } from './constants.js';
+import { launchDashboard } from './tui.js';
 import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 
@@ -149,7 +150,13 @@ program
 program
   .command('stats')
   .description('Show hook execution metrics')
-  .action(() => {
+  .option('-i, --interactive', 'Launch interactive TUI dashboard')
+  .action((opts: { interactive?: boolean }) => {
+    if (opts.interactive) {
+      launchDashboard();
+      return;
+    }
+
     const metrics = new MetricsCollector();
     console.log(metrics.formatStatsTable());
 
