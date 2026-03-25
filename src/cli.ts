@@ -6,10 +6,11 @@ import { Command } from 'commander';
 import { loadManifest, loadCompositeManifest, createDefaultManifest } from './manifest.js';
 import { MetricsCollector } from './metrics.js';
 import { startDaemon, stopDaemon, isDaemonRunning, startDaemonBackground } from './server.js';
-import { migrate, restore } from './migrate.js';
+import { migrate, restore, getSettingsPath } from './migrate.js';
 import { runDoctor } from './doctor.js';
 import { generateAuthToken, rotateToken } from './auth.js';
 import { installPlugin, uninstallPlugin, listPlugins, loadPlugins } from './plugin.js';
+import { syncSettings } from './sync.js';
 import { DEFAULT_PORT, CONFIG_DIR, PID_FILE, PLUGIN_MANIFEST_NAME } from './constants.js';
 import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
@@ -45,6 +46,13 @@ program
       startDaemonBackground({ noWatch });
       // Give it a moment to start
       await new Promise((r) => setTimeout(r, 500));
+
+      // Sync settings.json with manifest
+      const syncAdded = syncSettings();
+      if (syncAdded.length > 0) {
+        console.log(`Synced HTTP hooks for: ${syncAdded.join(', ')}`);
+      }
+
       if (isDaemonRunning()) {
         const pid = readFileSync(PID_FILE, 'utf-8').trim();
         console.log(`Daemon started (pid ${pid}), listening on 127.0.0.1:${DEFAULT_PORT}`);
@@ -204,13 +212,31 @@ program
     if (errors > 0) process.exit(1);
   });
 
+// --- sync ---
+program
+  .command('sync')
+  .description('Sync settings.json with manifest (add missing HTTP hook entries)')
+  .action(() => {
+    const added = syncSettings();
+    if (added.length === 0) {
+      console.log('Settings already in sync.');
+    } else {
+      console.log(`Added HTTP hooks for: ${added.join(', ')}`);
+      const settingsPath = getSettingsPath();
+      if (settingsPath) {
+        console.log(`Settings updated: ${settingsPath}`);
+      }
+    }
+  });
+
 // --- ensure-running ---
 program
   .command('ensure-running')
   .description('Start daemon if not already running (used by SessionStart hook)')
   .action(async () => {
     if (isDaemonRunning()) {
-      // Already running — exit silently and fast
+      // Already running — sync settings silently and exit fast
+      syncSettings();
       process.exit(0);
     }
 
@@ -226,6 +252,10 @@ program
     }
 
     startDaemonBackground();
+
+    // Sync settings silently after starting
+    syncSettings();
+
     process.exit(0);
   });
 
@@ -325,6 +355,12 @@ program
         : 0;
 
       console.log(`Installed plugin ${plugin.name} v${plugin.version} (${handlerCount} handlers)`);
+
+      // Sync settings.json to add HTTP hooks for any new events
+      const syncAdded = syncSettings();
+      if (syncAdded.length > 0) {
+        console.log(`Synced HTTP hooks for: ${syncAdded.join(', ')}`);
+      }
     } catch (err) {
       console.error('Plugin install failed:', err instanceof Error ? err.message : err);
       process.exit(1);

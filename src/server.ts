@@ -157,19 +157,26 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
       return;
     }
 
-    // Auth check for all POST requests
+    // Auth check for all POST requests — only when auth token is configured
     if (method === 'POST' && authToken) {
       const source = req.socket.remoteAddress ?? 'unknown';
 
-      // Rate limiting check
+      // Rate limiting: check if this source has too many auth failures
       if (!rateLimiter.check(source)) {
-        sendJson(res, 429, { error: 'Too many requests' });
+        const retryAfter = rateLimiter.retryAfter(source);
+        const body = JSON.stringify({ error: 'Too many auth failures' });
+        res.writeHead(429, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'Retry-After': String(retryAfter),
+        });
+        res.end(body);
         return;
       }
 
       const authHeader = req.headers['authorization'] as string | undefined;
       if (!validateAuth(authHeader, authToken)) {
-        rateLimiter.record(source);
+        rateLimiter.recordFailure(source);
         log(`Auth failure from ${source}`);
         sendJson(res, 401, { error: 'Unauthorized' });
         return;

@@ -13,6 +13,8 @@ export { DenyCache } from './shortcircuit.js';
 export { RateLimiter } from './ratelimit.js';
 export { startWatcher, stopWatcher } from './watcher.js';
 export { generateAuthToken, validateAuth, rotateToken } from './auth.js';
+export { syncSettings } from './sync.js';
+export type { SyncOptions } from './sync.js';
 export type { RotateTokenOptions } from './auth.js';
 export { evaluateFilter } from './filter.js';
 export { executeLLMHandler, executeLLMHandlersBatched, calculateCost, resetClient } from './llm.js';
