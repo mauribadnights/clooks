@@ -97,6 +97,7 @@ settings:
 **Handler types:**
 - `script` -- runs a shell command, pipes hook JSON to stdin, reads JSON from stdout.
 - `inline` -- imports a JS module and calls its default export. Faster; no subprocess overhead.
+- `llm` -- calls Anthropic Messages API. Supports prompt templates, batching, and cost tracking. *(v0.2+)*
 
 ## Observability
 
@@ -171,11 +172,54 @@ handlers:
       batchGroup: analysis    # batched with code-review into one API call
 ```
 
-Requires `@anthropic-ai/sdk` as a peer dependency and `ANTHROPIC_API_KEY` env var.
+**Setup:**
+
+```bash
+npm install @anthropic-ai/sdk    # peer dependency, only needed for llm handlers
+export ANTHROPIC_API_KEY=sk-...  # or set in manifest: settings.anthropicApiKey
+```
+
+**Prompt template variables:**
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| `$TRANSCRIPT` | Pre-fetched transcript file | Last 50KB of session transcript |
+| `$GIT_STATUS` | `git status --porcelain` | Current working tree status |
+| `$GIT_DIFF` | `git diff --stat` | Changed files summary (max 20KB) |
+| `$ARGUMENTS` | `hook_input.tool_input` | JSON-stringified tool arguments |
+| `$TOOL_NAME` | `hook_input.tool_name` | Name of the tool being called |
+| `$PROMPT` | `hook_input.prompt` | User's prompt (UserPromptSubmit only) |
+| `$CWD` | `hook_input.cwd` | Current working directory |
+
+**LLM handler options:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model` | string | required | `claude-haiku-4-5`, `claude-sonnet-4-6`, or `claude-opus-4-6` |
+| `prompt` | string | required | Prompt template with `$VARIABLE` interpolation |
+| `batchGroup` | string | optional | Group ID -- handlers with same group make one API call |
+| `maxTokens` | number | `1024` | Maximum output tokens |
+| `temperature` | number | `1.0` | Sampling temperature |
+| `filter` | string | optional | Keyword filter (see Filtering) |
+| `timeout` | number | `30000` | Timeout in milliseconds |
+
+**How batching works:**
+
+When multiple LLM handlers share a `batchGroup` on the same event, clooks combines their prompts into a single multi-task API call and splits the structured response back to each handler. This means 3 Haiku calls become 1, saving ~2/3 of the input token cost and eliminating 2 round-trips.
 
 ### Intelligent Filtering
 
-Skip handlers based on keywords. Supports OR (`|`) and NOT (`!`) operators. Matching is case-insensitive against the full hook input JSON.
+Skip handlers based on keywords. The `filter` field works on **all handler types** -- script, inline, and llm.
+
+**Filter syntax:**
+
+```
+filter: "word1|word2"      # run if input contains word1 OR word2
+filter: "!word"            # run unless input contains word
+filter: "word1|!word2"     # run if word1 present AND word2 absent
+```
+
+Matching is case-insensitive against the full JSON-serialized hook input.
 
 ```yaml
 handlers:
@@ -204,9 +248,19 @@ handlers:
       prompt: "Summarize this session:\n$TRANSCRIPT\n\nGit changes:\n$GIT_DIFF"
 ```
 
+**Available prefetch keys:**
+
+| Key | Source | Max size | Description |
+|-----|--------|----------|-------------|
+| `transcript` | `transcript_path` file | 50KB (tail) | Session conversation history |
+| `git_status` | `git status --porcelain` | unbounded | Working tree status |
+| `git_diff` | `git diff --stat` | 20KB | Changed files summary |
+
+Pre-fetched data is cached for the duration of a single event dispatch. Errors on individual keys are silently caught -- a failed `git_status` won't prevent `transcript` from loading.
+
 ### Cost Tracking
 
-Track LLM token usage and costs per handler and model. Pricing is built-in for Haiku 4.5, Sonnet 4.6, and Opus 4.6.
+Track LLM token usage and costs per handler and model.
 
 ```
 $ clooks costs
@@ -222,7 +276,10 @@ LLM Cost Summary
     security-check         $0.0053 (12 calls, avg 178 tokens)
 ```
 
-Cost data also appears in `clooks stats` when LLM handlers have been used.
+- Costs are persisted to `~/.clooks/costs.jsonl`
+- Built-in pricing (per million tokens): Haiku ($0.80 / $4.00), Sonnet ($3.00 / $15.00), Opus ($15.00 / $75.00)
+- Batching savings are estimated based on shared input tokens
+- Cost data also appears in `clooks stats` when LLM handlers have been used
 
 ## Roadmap
 
