@@ -147,9 +147,9 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
     const url = req.url ?? '/';
     const method = req.method ?? 'GET';
 
-    // Public health endpoint — minimal, no auth
+    // Public health endpoint — includes PID for orphan recovery
     if (method === 'GET' && url === '/health') {
-      sendJson(res, 200, { status: 'ok' });
+      sendJson(res, 200, { status: 'ok', pid: process.pid });
       return;
     }
 
@@ -356,10 +356,22 @@ export function startDaemon(manifest: Manifest, metrics: MetricsCollector, optio
     const ctx = createServer(manifest, metrics);
     const port = manifest.settings?.port ?? DEFAULT_PORT;
 
-    ctx.server.on('error', (err: NodeJS.ErrnoException) => {
+    ctx.server.on('error', async (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
-        log(`Port ${port} already in use`);
-        reject(new Error(`Port ${port} is already in use. Is another clooks instance running?`));
+        log(`Port ${port} already in use — attempting orphan recovery`);
+        // Try to recover: if a clooks daemon is already on this port, re-adopt it
+        try {
+          const health = await probeHealth(port);
+          if (health && health.pid) {
+            writePidFile(health.pid);
+            log(`Re-adopted orphaned daemon (pid ${health.pid})`);
+            resolve(ctx);
+            return;
+          }
+        } catch {
+          // Probe failed — port is in use by something else
+        }
+        reject(new Error(`Port ${port} is already in use. Run 'clooks stop' to stop the existing daemon, or 'clooks status' to check.`));
       } else {
         log(`Server error: ${err.message}`);
         reject(err);
@@ -482,17 +494,23 @@ export function startDaemon(manifest: Manifest, metrics: MetricsCollector, optio
 
 /**
  * Stop a running daemon by reading PID file and sending SIGTERM.
+ * If no PID file exists, tries to recover PID from the health endpoint.
  */
 export function stopDaemon(): boolean {
-  if (!existsSync(PID_FILE)) {
-    return false;
+  let pid: number | null = null;
+
+  if (existsSync(PID_FILE)) {
+    const pidStr = readFileSync(PID_FILE, 'utf-8').trim();
+    pid = parseInt(pidStr, 10);
+    if (isNaN(pid)) {
+      unlinkSync(PID_FILE);
+      pid = null;
+    }
   }
 
-  const pidStr = readFileSync(PID_FILE, 'utf-8').trim();
-  const pid = parseInt(pidStr, 10);
-
-  if (isNaN(pid)) {
-    unlinkSync(PID_FILE);
+  // If no PID from file, try synchronous recovery via health endpoint
+  // We can't await here (sync function), so use stopDaemonAsync for full recovery
+  if (pid === null) {
     return false;
   }
 
@@ -519,6 +537,60 @@ export function stopDaemon(): boolean {
   }, 2000);
 
   return true;
+}
+
+/**
+ * Async version of stopDaemon that can recover orphaned daemons via /health.
+ * Returns { stopped: boolean, pid?: number, recovered?: boolean }.
+ */
+export async function stopDaemonAsync(): Promise<{ stopped: boolean; pid?: number; recovered?: boolean }> {
+  let pid: number | null = null;
+
+  if (existsSync(PID_FILE)) {
+    const pidStr = readFileSync(PID_FILE, 'utf-8').trim();
+    pid = parseInt(pidStr, 10);
+    if (isNaN(pid)) {
+      unlinkSync(PID_FILE);
+      pid = null;
+    }
+  }
+
+  // No PID file — try health endpoint recovery
+  if (pid === null) {
+    const health = await probeHealth();
+    if (health && health.pid) {
+      pid = health.pid;
+      log(`Recovered orphaned daemon PID ${pid} from /health for stop`);
+    }
+  }
+
+  if (pid === null) {
+    return { stopped: false };
+  }
+
+  const recovered = !existsSync(PID_FILE);
+
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    try {
+      if (existsSync(PID_FILE)) unlinkSync(PID_FILE);
+    } catch {
+      // ignore
+    }
+    return { stopped: false };
+  }
+
+  // Clean up PID file after a moment
+  setTimeout(() => {
+    try {
+      if (existsSync(PID_FILE)) unlinkSync(PID_FILE);
+    } catch {
+      // ignore
+    }
+  }, 2000);
+
+  return { stopped: true, pid, recovered };
 }
 
 /**
@@ -579,6 +651,43 @@ export async function isDaemonHealthy(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Probe the health endpoint on the daemon port.
+ * Returns the parsed health response (including pid) or null if unreachable.
+ */
+export async function probeHealth(port?: number): Promise<{ status: string; pid: number } | null> {
+  const p = port ?? DEFAULT_PORT;
+  try {
+    const { get } = await import('http');
+    const data = await new Promise<string>((resolve, reject) => {
+      const req = get(`http://127.0.0.1:${p}/health`, (res) => {
+        let body = '';
+        res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+        res.on('end', () => resolve(body));
+      });
+      req.on('error', reject);
+      req.setTimeout(2000, () => { req.destroy(); reject(new Error('timeout')); });
+    });
+    const health = JSON.parse(data);
+    if (health.status === 'ok' && typeof health.pid === 'number') {
+      return health as { status: string; pid: number };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a PID to the daemon PID file, creating the config dir if needed.
+ */
+export function writePidFile(pid: number): void {
+  if (!existsSync(CONFIG_DIR)) {
+    mkdirSync(CONFIG_DIR, { recursive: true });
+  }
+  writeFileSync(PID_FILE, String(pid), 'utf-8');
 }
 
 /**

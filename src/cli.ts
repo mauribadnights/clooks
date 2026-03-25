@@ -5,7 +5,7 @@
 import { Command } from 'commander';
 import { loadManifest, loadCompositeManifest, createDefaultManifest } from './manifest.js';
 import { MetricsCollector } from './metrics.js';
-import { startDaemon, stopDaemon, isDaemonRunning, isDaemonHealthy, cleanupStaleDaemon, startDaemonBackground } from './server.js';
+import { startDaemon, stopDaemon, stopDaemonAsync, isDaemonRunning, isDaemonHealthy, cleanupStaleDaemon, startDaemonBackground, probeHealth, writePidFile } from './server.js';
 import { migrate, restore, getSettingsPath } from './migrate.js';
 import { runDoctor } from './doctor.js';
 import { generateAuthToken, rotateToken } from './auth.js';
@@ -35,17 +35,28 @@ program
   .action(async (opts: { foreground?: boolean; watch?: boolean }) => {
     const noWatch = opts.watch === false;
     if (!opts.foreground) {
-      // Background mode: check if already running and healthy
+      // Fix 6: Idempotent start — check if daemon is already healthy first
+      // This covers both normal PID file case AND orphaned daemon (no PID file)
       if (isDaemonRunning()) {
         const healthy = await isDaemonHealthy();
         if (healthy) {
-          console.log('Daemon is already running.');
+          const pid = existsSync(PID_FILE) ? readFileSync(PID_FILE, 'utf-8').trim() : '?';
+          console.log(`Daemon is already running (pid ${pid}).`);
           process.exit(0);
         }
         // PID alive but daemon unhealthy — stale process after sleep/lid-close
         const stalePid = cleanupStaleDaemon();
         if (stalePid) {
           console.log(`Cleaned up stale daemon (pid ${stalePid}), starting fresh`);
+        }
+      } else {
+        // No PID file or dead PID — check if an orphaned daemon is on the port
+        const health = await probeHealth();
+        if (health && health.pid) {
+          // Orphaned daemon found — re-adopt it
+          writePidFile(health.pid);
+          console.log(`Adopted existing daemon (pid ${health.pid}).`);
+          process.exit(0);
         }
       }
 
@@ -69,7 +80,14 @@ program
         const pid = readFileSync(PID_FILE, 'utf-8').trim();
         console.log(`Daemon started (pid ${pid}), listening on 127.0.0.1:${DEFAULT_PORT}`);
       } else {
-        console.log('Daemon started. Check ~/.clooks/daemon.log if issues arise.');
+        // Fix 1: After spawn, if PID file missing, check if port responded (orphan recovery)
+        const health = await probeHealth();
+        if (health && health.pid) {
+          writePidFile(health.pid);
+          console.log(`Adopted existing daemon (pid ${health.pid}).`);
+        } else {
+          console.log('Daemon started. Check ~/.clooks/daemon.log if issues arise.');
+        }
       }
       process.exit(0);
     }
@@ -95,11 +113,22 @@ program
 program
   .command('stop')
   .description('Stop the clooks daemon')
-  .action(() => {
+  .action(async () => {
+    // Try sync stop first (fast path with PID file)
     if (stopDaemon()) {
       console.log('Daemon stopped.');
+      return;
+    }
+    // Fix 4: No PID file — try async recovery via /health
+    const result = await stopDaemonAsync();
+    if (result.stopped) {
+      if (result.recovered) {
+        console.log(`Daemon stopped (recovered orphan, pid ${result.pid}).`);
+      } else {
+        console.log('Daemon stopped.');
+      }
     } else {
-      console.log('Daemon is not running (no PID file or process not found).');
+      console.log('Daemon is not running.');
     }
   });
 
@@ -109,21 +138,31 @@ program
   .description('Show daemon status')
   .action(async () => {
     const running = isDaemonRunning();
+    const serviceStatus = getServiceStatus();
+
     if (!running) {
+      // Fix 2: No PID file or dead PID — check if orphaned daemon is on the port
+      const health = await probeHealth();
+      if (health && health.pid) {
+        // Orphaned daemon found — recover PID file
+        writePidFile(health.pid);
+        console.log(`Status: running (recovered, pid ${health.pid})`);
+        console.log(`Port: ${DEFAULT_PORT}`);
+        console.log(`Service: ${serviceStatus}`);
+        console.log('Note: PID file was missing. Re-adopted orphaned daemon.');
+        return;
+      }
       console.log('Status: stopped');
       return;
     }
 
     const pid = existsSync(PID_FILE) ? readFileSync(PID_FILE, 'utf-8').trim() : '?';
 
-    // Try to hit health endpoint
-    // Service status
-    const serviceStatus = getServiceStatus();
-
+    // Try to hit health endpoint for detailed info
     try {
       const { get } = await import('http');
       const data = await new Promise<string>((resolve, reject) => {
-        const req = get(`http://127.0.0.1:${DEFAULT_PORT}/health`, (res) => {
+        const req = get(`http://127.0.0.1:${DEFAULT_PORT}/health/detail`, (res) => {
           let body = '';
           res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
           res.on('end', () => resolve(body));
@@ -355,6 +394,14 @@ program
         } catch {
           // ignore
         }
+      }
+    } else {
+      // No PID file — check for orphaned daemon on the port
+      const health = await probeHealth();
+      if (health && health.pid) {
+        writePidFile(health.pid);
+        syncSettings();
+        process.exit(0);
       }
     }
 

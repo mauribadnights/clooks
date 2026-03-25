@@ -104,13 +104,14 @@ describe('server', () => {
     resetHandlerStates();
   });
 
-  it('GET /health returns 200 with minimal status ok', async () => {
+  it('GET /health returns 200 with status ok and pid', async () => {
     const res = await httpRequest(port, 'GET', '/health');
 
     expect(res.status).toBe(200);
     expect(res.data.status).toBe('ok');
-    // Public /health is minimal — no uptime or handler count
-    expect(Object.keys(res.data)).toEqual(['status']);
+    expect(res.data.pid).toBe(process.pid);
+    // Public /health includes pid for orphan recovery — no uptime or handler count
+    expect(Object.keys(res.data).sort()).toEqual(['pid', 'status']);
   });
 
   it('GET /health/detail returns 200 with full health info', async () => {
@@ -264,10 +265,11 @@ describe('server with auth token', () => {
     resetHandlerStates();
   });
 
-  it('GET /health works without auth token', async () => {
+  it('GET /health works without auth token and includes pid', async () => {
     const res = await httpRequest(port, 'GET', '/health');
     expect(res.status).toBe(200);
     expect(res.data.status).toBe('ok');
+    expect(res.data.pid).toBe(process.pid);
   });
 
   it('GET /health/detail requires auth when token configured', async () => {
