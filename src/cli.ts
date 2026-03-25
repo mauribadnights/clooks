@@ -131,6 +131,10 @@ program
     const metrics = new MetricsCollector();
     console.log(metrics.formatStatsTable());
 
+    console.log('');
+    console.log('Per Handler:');
+    console.log(metrics.formatHandlerStatsTable());
+
     // Append cost summary if LLM data exists
     const costStats = metrics.getCostStats();
     if (costStats.totalCost > 0) {

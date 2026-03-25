@@ -14,6 +14,17 @@ interface AggregatedStats {
   maxDuration: number;
 }
 
+export interface HandlerStats {
+  handler: string;
+  event: string;
+  fires: number;
+  errors: number;
+  filtered: number;
+  avgDuration: number;
+  minDuration: number;
+  maxDuration: number;
+}
+
 export class MetricsCollector {
   private static readonly MAX_ENTRIES = 1000;
   private entries: MetricEntry[] = [];
@@ -110,6 +121,61 @@ export class MetricsCollector {
     }
 
     return stats.sort((a, b) => b.fires - a.fires);
+  }
+
+  /** Get per-handler stats (not just per-event). */
+  getHandlerStats(): HandlerStats[] {
+    const all = this.loadAll();
+    const byHandler = new Map<string, MetricEntry[]>();
+
+    for (const entry of all) {
+      const existing = byHandler.get(entry.handler) ?? [];
+      existing.push(entry);
+      byHandler.set(entry.handler, existing);
+    }
+
+    const stats: HandlerStats[] = [];
+    for (const [handler, entries] of byHandler) {
+      const durations = entries.map((e) => e.duration_ms);
+      stats.push({
+        handler,
+        event: entries[0].event,
+        fires: entries.length,
+        errors: entries.filter((e) => !e.ok).length,
+        filtered: entries.filter((e) => e.filtered).length,
+        avgDuration: durations.reduce((a, b) => a + b, 0) / durations.length,
+        minDuration: Math.min(...durations),
+        maxDuration: Math.max(...durations),
+      });
+    }
+
+    return stats.sort((a, b) => {
+      if (b.fires !== a.fires) return b.fires - a.fires;
+      return b.avgDuration - a.avgDuration;
+    });
+  }
+
+  /** Format per-handler stats as a CLI-friendly table. */
+  formatHandlerStatsTable(): string {
+    const stats = this.getHandlerStats();
+    if (stats.length === 0) {
+      return 'No per-handler metrics recorded yet.';
+    }
+
+    const header = padHandlerRow(['Handler', 'Event', 'Fires', 'Errors', 'Avg ms', 'Max ms']);
+    const separator = '-'.repeat(header.length);
+    const rows = stats.map((s) =>
+      padHandlerRow([
+        s.handler,
+        s.event,
+        String(s.fires),
+        String(s.errors),
+        s.avgDuration.toFixed(1),
+        s.maxDuration.toFixed(1),
+      ])
+    );
+
+    return [header, separator, ...rows].join('\n');
   }
 
   /** Flush is a no-op since we append on every record, but provided for API completeness. */
@@ -284,5 +350,10 @@ function formatTokenCount(tokens: number): string {
 
 function padRow(cols: string[]): string {
   const widths = [20, 8, 8, 10, 10, 10];
+  return cols.map((col, i) => col.padEnd(widths[i])).join('  ');
+}
+
+function padHandlerRow(cols: string[]): string {
+  const widths = [35, 20, 7, 7, 8, 8];
   return cols.map((col, i) => col.padEnd(widths[i])).join('  ');
 }

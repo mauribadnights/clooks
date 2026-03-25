@@ -61,6 +61,52 @@ export function getSettingsPath(options?: MigratePathOptions): string | null {
 }
 
 /**
+ * Derive a readable handler ID from a hook command.
+ *
+ * "node /path/to/gsd-check-update.js" -> "gsd-check-update"
+ * "node /path/to/hooks/post-action.js" -> "post-action"
+ * "python3 -m almicio.hooks.session_context" -> "almicio-session-context"
+ * "bash -c 'source ~/.zshrc; python3 /path/to/tts-summary.py'" -> "tts-summary"
+ */
+export function deriveHandlerId(command: string, event: string, index: number): string {
+  let basename: string | null = null;
+
+  // Try python3 -m module.name pattern
+  const moduleMatch = command.match(/python3?\s+-m\s+([\w.]+)/);
+  if (moduleMatch) {
+    const modulePath = moduleMatch[1];
+    const lastSegment = modulePath.split('.').pop() ?? '';
+    if (lastSegment) basename = lastSegment;
+  }
+
+  // Try to find the last .js or .py file in the command
+  if (!basename) {
+    // Match quoted or unquoted file paths ending in .js or .py
+    const fileMatches = [...command.matchAll(/(?:["'])?([^\s"']+\.(?:js|py))(?:["'])?/g)];
+    if (fileMatches.length > 0) {
+      const lastFile = fileMatches[fileMatches.length - 1][1];
+      // Extract basename without extension
+      const parts = lastFile.split('/');
+      const filename = parts[parts.length - 1];
+      basename = filename.replace(/\.(js|py)$/, '');
+    }
+  }
+
+  if (!basename) {
+    return `migrated-${event.toLowerCase()}-${index}`;
+  }
+
+  // Sanitize: replace non-alphanumeric chars with hyphens, lowercase
+  let id = basename.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+  if (!id) {
+    return `migrated-${event.toLowerCase()}-${index}`;
+  }
+
+  return id;
+}
+
+/**
  * Migrate Claude Code settings.json command hooks to clooks HTTP hooks.
  *
  * 1. Read settings.json
@@ -106,6 +152,7 @@ export function migrate(options?: MigratePathOptions): { manifestPath: string; s
   // Extract command hooks and build manifest
   const manifestHandlers: Partial<Record<HookEvent, HandlerConfig[]>> = {};
   let handlerIndex = 0;
+  const usedIds = new Set<string>();
 
   // NOTE: In v0.1, matchers from the original rule groups are not preserved in the
   // migrated HTTP hooks — all command hooks are consolidated into matcher-less rule groups.
@@ -128,8 +175,14 @@ export function migrate(options?: MigratePathOptions): { manifestPath: string; s
 
     manifestHandlers[event] = commandHooks.map((hook) => {
       handlerIndex++;
+      let id = deriveHandlerId(hook.command!, event, handlerIndex);
+      // Ensure uniqueness: if ID already used, append index
+      if (usedIds.has(id)) {
+        id = `${id}-${handlerIndex}`;
+      }
+      usedIds.add(id);
       return {
-        id: `migrated-${event.toLowerCase()}-${handlerIndex}`,
+        id,
         type: 'script' as const,
         command: hook.command!,
         timeout: hook.timeout ? hook.timeout * 1000 : 5000, // Claude uses seconds, we use ms
