@@ -1,6 +1,6 @@
 // clooks metrics and observability
 
-import { appendFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
+import { appendFileSync, readFileSync, existsSync, mkdirSync, statSync, renameSync } from 'fs';
 import { dirname } from 'path';
 import { METRICS_FILE, COSTS_FILE } from './constants.js';
 import type { MetricEntry, HookEvent, CostEntry } from './types.js';
@@ -20,6 +20,22 @@ export class MetricsCollector {
   private ringIndex = 0;
   private totalRecorded = 0;
 
+  private static readonly METRICS_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+  private static readonly COSTS_MAX_BYTES = 1 * 1024 * 1024;  // 1MB
+
+  /** Rotate a log file if it exceeds maxBytes. Keeps one backup (.1). */
+  private rotateIfNeeded(filePath: string, maxBytes: number): void {
+    try {
+      if (!existsSync(filePath)) return;
+      const stat = statSync(filePath);
+      if (stat.size >= maxBytes) {
+        renameSync(filePath, filePath + '.1');
+      }
+    } catch {
+      // Non-critical — rotation failure is not fatal
+    }
+  }
+
   /** Record a metric entry in memory (ring buffer) and append to disk. */
   record(entry: MetricEntry): void {
     // Ring buffer: overwrite oldest when full
@@ -35,6 +51,7 @@ export class MetricsCollector {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
       }
+      this.rotateIfNeeded(METRICS_FILE, MetricsCollector.METRICS_MAX_BYTES);
       appendFileSync(METRICS_FILE, JSON.stringify(entry) + '\n', 'utf-8');
     } catch {
       // Non-critical — metrics should not crash the daemon
@@ -70,10 +87,7 @@ export class MetricsCollector {
 
   /** Get stats for a specific session. */
   getSessionStats(sessionId: string): AggregatedStats[] {
-    const all = this.loadAll().filter((e) => {
-      // MetricEntry doesn't have session_id, but we stored it in the entry if available
-      return (e as MetricEntry & { session_id?: string }).session_id === sessionId;
-    });
+    const all = this.loadAll().filter((e) => e.session_id === sessionId);
 
     const byEvent = new Map<string, MetricEntry[]>();
     for (const entry of all) {
@@ -145,6 +159,7 @@ export class MetricsCollector {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
       }
+      this.rotateIfNeeded(COSTS_FILE, MetricsCollector.COSTS_MAX_BYTES);
       appendFileSync(COSTS_FILE, JSON.stringify(entry) + '\n', 'utf-8');
     } catch {
       // Non-critical — cost tracking should not crash the daemon

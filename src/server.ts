@@ -189,6 +189,7 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
             filtered: result.filtered,
             usage: result.usage,
             cost_usd: result.cost_usd,
+            session_id: input.session_id,
           });
 
           // Track cost for LLM handlers
@@ -255,15 +256,21 @@ export function startDaemon(manifest: Manifest, metrics: MetricsCollector, optio
 
       // Start file watcher unless disabled
       if (!options?.noWatch) {
-        ctx.watcher = startWatcher(MANIFEST_PATH, () => {
-          try {
-            const newManifest = loadManifest();
-            ctx.manifest = newManifest;
-            log('Manifest reloaded');
-          } catch (err) {
-            log(`Manifest reload failed: ${err instanceof Error ? err.message : err}`);
-          }
-        }) ?? undefined;
+        ctx.watcher = startWatcher(
+          MANIFEST_PATH,
+          () => {
+            try {
+              const newManifest = loadManifest();
+              ctx.manifest = newManifest;
+              log('Manifest reloaded successfully');
+            } catch (err) {
+              log(`Manifest reload failed (keeping previous config): ${err instanceof Error ? err.message : err}`);
+            }
+          },
+          (err) => {
+            log(`Watcher error: ${err.message}`);
+          },
+        ) ?? undefined;
       }
 
       log(`Daemon started on 127.0.0.1:${port} (pid ${process.pid})`);

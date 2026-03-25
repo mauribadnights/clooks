@@ -124,6 +124,7 @@ export interface MetricEntry {
   filtered?: boolean;       // Was this handler skipped by filter?
   usage?: TokenUsage;       // For LLM handlers
   cost_usd?: number;        // For LLM handlers
+  session_id?: string;      // Claude Code session ID
 }
 
 /** Extended handler result with cost info */

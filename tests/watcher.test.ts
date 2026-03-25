@@ -63,9 +63,78 @@ describe('watcher', () => {
     stopWatcher(watcher);
   });
 
-  it('returns null for non-existent file', () => {
+  it('watches directory when manifest file does not exist', () => {
+    // When the manifest file doesn't exist, startWatcher now watches the parent dir
+    // and returns a watcher (not null)
     const watcher = startWatcher(join(tmpDir, 'nonexistent.yaml'), () => {});
-    expect(watcher).toBeNull();
+    expect(watcher).not.toBeNull();
+    stopWatcher(watcher);
+  });
+
+  it('calls onReload when manifest is created in watched directory', async () => {
+    const filePath = join(tmpDir, 'manifest.yaml');
+
+    let reloadCount = 0;
+    const watcher = startWatcher(filePath, () => {
+      reloadCount++;
+    });
+
+    expect(watcher).not.toBeNull();
+
+    // Create the manifest file after the watcher started
+    await new Promise((r) => setTimeout(r, 100));
+    writeFileSync(filePath, 'handlers: {}');
+
+    // Wait for the directory watcher to detect creation
+    await new Promise((r) => setTimeout(r, 700));
+
+    expect(reloadCount).toBeGreaterThanOrEqual(1);
+
+    stopWatcher(watcher);
+  });
+
+  it('calls onError callback on watcher errors', () => {
+    const filePath = join(tmpDir, 'manifest.yaml');
+    writeFileSync(filePath, 'initial');
+
+    const errors: Error[] = [];
+    const watcher = startWatcher(
+      filePath,
+      () => {},
+      (err) => { errors.push(err); },
+    );
+
+    expect(watcher).not.toBeNull();
+
+    // Emit an error on the watcher
+    watcher!.emit('error', new Error('test error'));
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toBe('test error');
+
+    stopWatcher(watcher);
+  });
+
+  it('calls onError when reload callback throws', async () => {
+    const filePath = join(tmpDir, 'manifest.yaml');
+    writeFileSync(filePath, 'initial');
+
+    const errors: Error[] = [];
+    const watcher = startWatcher(
+      filePath,
+      () => { throw new Error('reload boom'); },
+      (err) => { errors.push(err); },
+    );
+
+    // Trigger a file change
+    await new Promise((r) => setTimeout(r, 100));
+    writeFileSync(filePath, 'changed');
+    await new Promise((r) => setTimeout(r, 700));
+
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+    expect(errors[0].message).toBe('reload boom');
+
+    stopWatcher(watcher);
   });
 
   it('stopWatcher handles null gracefully', () => {
