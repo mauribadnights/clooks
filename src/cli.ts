@@ -3,14 +3,16 @@
 // clooks CLI entry point
 
 import { Command } from 'commander';
-import { loadManifest, createDefaultManifest } from './manifest.js';
+import { loadManifest, loadCompositeManifest, createDefaultManifest } from './manifest.js';
 import { MetricsCollector } from './metrics.js';
 import { startDaemon, stopDaemon, isDaemonRunning, startDaemonBackground } from './server.js';
 import { migrate, restore } from './migrate.js';
 import { runDoctor } from './doctor.js';
 import { generateAuthToken } from './auth.js';
-import { DEFAULT_PORT, CONFIG_DIR, PID_FILE } from './constants.js';
+import { installPlugin, uninstallPlugin, listPlugins, loadPlugins } from './plugin.js';
+import { DEFAULT_PORT, CONFIG_DIR, PID_FILE, PLUGIN_MANIFEST_NAME } from './constants.js';
 import { existsSync, readFileSync, mkdirSync } from 'fs';
+import { resolve } from 'path';
 
 const program = new Command();
 
@@ -54,7 +56,7 @@ program
 
     // Foreground mode: run the actual server
     try {
-      const manifest = loadManifest();
+      const manifest = loadCompositeManifest();
       const metrics = new MetricsCollector();
       const port = manifest.settings?.port ?? DEFAULT_PORT;
 
@@ -108,11 +110,13 @@ program
       });
 
       const health = JSON.parse(data);
+      const pluginCount = listPlugins().length;
       console.log(`Status: running`);
       console.log(`PID: ${pid}`);
       console.log(`Port: ${health.port}`);
       console.log(`Uptime: ${formatUptime(health.uptime)}`);
       console.log(`Handlers loaded: ${health.handlers_loaded}`);
+      console.log(`Plugins: ${pluginCount}`);
     } catch {
       console.log(`Status: running (pid ${pid})`);
       console.log(`Note: Could not reach health endpoint on port ${DEFAULT_PORT}`);
@@ -234,6 +238,85 @@ program
     console.log(`Created: ${path}`);
     console.log(`Auth token: ${token}`);
     console.log('Edit this file to configure your hook handlers.');
+  });
+
+// --- add (install plugin) ---
+program
+  .command('add <path>')
+  .description('Install a plugin from a local directory')
+  .action((pluginPath: string) => {
+    try {
+      const resolvedPath = resolve(pluginPath);
+      if (!existsSync(resolvedPath)) {
+        console.error(`Path does not exist: ${resolvedPath}`);
+        process.exit(1);
+      }
+
+      const manifestFile = resolve(resolvedPath, PLUGIN_MANIFEST_NAME);
+      if (!existsSync(manifestFile)) {
+        console.error(`No ${PLUGIN_MANIFEST_NAME} found at ${resolvedPath}`);
+        process.exit(1);
+      }
+
+      const plugin = installPlugin(resolvedPath);
+
+      // Count handlers in the installed plugin
+      const plugins = loadPlugins();
+      const installed = plugins.find(p => p.name === plugin.name);
+      const handlerCount = installed
+        ? Object.values(installed.manifest.handlers).reduce((sum, arr) => sum + (arr?.length ?? 0), 0)
+        : 0;
+
+      console.log(`Installed plugin ${plugin.name} v${plugin.version} (${handlerCount} handlers)`);
+    } catch (err) {
+      console.error('Plugin install failed:', err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
+  });
+
+// --- remove (uninstall plugin) ---
+program
+  .command('remove <name>')
+  .description('Uninstall a plugin')
+  .action((name: string) => {
+    try {
+      uninstallPlugin(name);
+      console.log(`Removed plugin ${name}`);
+    } catch (err) {
+      console.error('Plugin removal failed:', err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
+  });
+
+// --- plugins (list installed plugins) ---
+program
+  .command('plugins')
+  .description('List installed plugins')
+  .action(() => {
+    const plugins = listPlugins();
+    if (plugins.length === 0) {
+      console.log('No plugins installed.');
+      return;
+    }
+
+    // Table header
+    const cols = [
+      'Name'.padEnd(25),
+      'Version'.padEnd(12),
+      'Installed'.padEnd(22),
+    ];
+    console.log(cols.join('  '));
+    console.log('-'.repeat(cols.join('  ').length));
+
+    for (const p of plugins) {
+      const installed = new Date(p.installedAt).toLocaleDateString('en-US', {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      });
+      console.log(
+        `${p.name.padEnd(25)}  ${p.version.padEnd(12)}  ${installed}`
+      );
+    }
   });
 
 program.parse();

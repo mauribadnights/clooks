@@ -5,10 +5,12 @@ import { get as httpGet } from 'http';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
-import { CONFIG_DIR, MANIFEST_PATH, PID_FILE, DEFAULT_PORT } from './constants.js';
+import { CONFIG_DIR, MANIFEST_PATH, PID_FILE, DEFAULT_PORT, PLUGIN_MANIFEST_NAME } from './constants.js';
 import { loadManifest } from './manifest.js';
 import { isDaemonRunning } from './server.js';
-import type { DiagnosticResult, HandlerConfig, HookEvent } from './types.js';
+import { loadRegistry, validatePluginManifest } from './plugin.js';
+import { parse as parseYaml } from 'yaml';
+import type { DiagnosticResult, HandlerConfig, HookEvent, PluginManifest } from './types.js';
 
 /**
  * Run all diagnostic checks and return results.
@@ -39,6 +41,9 @@ export async function runDoctor(): Promise<DiagnosticResult[]> {
 
   // 8. Auth token consistency (if configured)
   results.push(checkAuthToken());
+
+  // 9. Plugin health checks
+  results.push(...checkPluginHealth());
 
   return results;
 }
@@ -257,4 +262,60 @@ function checkAuthToken(): DiagnosticResult {
   } catch {
     return { check: 'Auth token', status: 'ok', message: 'Could not load manifest for auth check' };
   }
+}
+
+function checkPluginHealth(): DiagnosticResult[] {
+  const results: DiagnosticResult[] = [];
+
+  try {
+    const registry = loadRegistry();
+    if (registry.plugins.length === 0) {
+      results.push({ check: 'Plugins', status: 'ok', message: 'No plugins installed' });
+      return results;
+    }
+
+    for (const plugin of registry.plugins) {
+      // Check directory exists
+      if (!existsSync(plugin.path)) {
+        results.push({
+          check: `Plugin "${plugin.name}"`,
+          status: 'error',
+          message: `Plugin directory missing: ${plugin.path}`,
+        });
+        continue;
+      }
+
+      // Check manifest exists and is valid
+      const manifestPath = join(plugin.path, PLUGIN_MANIFEST_NAME);
+      if (!existsSync(manifestPath)) {
+        results.push({
+          check: `Plugin "${plugin.name}"`,
+          status: 'error',
+          message: `Plugin manifest missing: ${manifestPath}`,
+        });
+        continue;
+      }
+
+      try {
+        const raw = readFileSync(manifestPath, 'utf-8');
+        const parsed = parseYaml(raw) as PluginManifest;
+        validatePluginManifest(parsed);
+        results.push({
+          check: `Plugin "${plugin.name}"`,
+          status: 'ok',
+          message: `v${plugin.version} — manifest valid`,
+        });
+      } catch (err) {
+        results.push({
+          check: `Plugin "${plugin.name}"`,
+          status: 'error',
+          message: `Invalid manifest: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    }
+  } catch {
+    results.push({ check: 'Plugins', status: 'ok', message: 'Could not load plugin registry' });
+  }
+
+  return results;
 }

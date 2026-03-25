@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { MANIFEST_PATH, CONFIG_DIR, HOOK_EVENTS } from './constants.js';
+import { loadPlugins, mergeManifests } from './plugin.js';
 import type { Manifest, HandlerConfig, HookEvent } from './types.js';
 
 /**
@@ -111,6 +112,15 @@ export function validateManifest(manifest: Manifest): void {
       }
     }
   }
+}
+
+/**
+ * Load the composite manifest: user manifest + all installed plugins.
+ */
+export function loadCompositeManifest(): Manifest {
+  const userManifest = loadManifest();
+  const plugins = loadPlugins();
+  return mergeManifests(userManifest, plugins);
 }
 
 /**

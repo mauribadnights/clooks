@@ -10,7 +10,7 @@ import { MetricsCollector } from './metrics.js';
 import { startWatcher, stopWatcher } from './watcher.js';
 import { validateAuth } from './auth.js';
 import { DEFAULT_PORT, PID_FILE, LOG_FILE, CONFIG_DIR, HOOK_EVENTS, MANIFEST_PATH } from './constants.js';
-import { loadManifest } from './manifest.js';
+import { loadManifest, loadCompositeManifest } from './manifest.js';
 import type { Manifest, HookEvent, HookInput, HandlerResult, HandlerConfig, PrefetchContext, CostEntry } from './types.js';
 
 function log(msg: string): void {
@@ -260,7 +260,7 @@ export function startDaemon(manifest: Manifest, metrics: MetricsCollector, optio
           MANIFEST_PATH,
           () => {
             try {
-              const newManifest = loadManifest();
+              const newManifest = loadCompositeManifest();
               ctx.manifest = newManifest;
               log('Manifest reloaded successfully');
             } catch (err) {

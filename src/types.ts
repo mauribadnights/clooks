@@ -47,6 +47,7 @@ export interface LLMHandlerConfig {
   timeout?: number;          // ms, default 30000 for LLM
   enabled?: boolean;
   sessionIsolation?: boolean; // Reset handler state on SessionStart
+  depends?: string[];  // handler IDs this handler depends on (executed after them)
 }
 
 /** Script handler config */
@@ -58,6 +59,7 @@ export interface ScriptHandlerConfig {
   timeout?: number;
   enabled?: boolean;
   sessionIsolation?: boolean; // Reset handler state on SessionStart
+  depends?: string[];  // handler IDs this handler depends on (executed after them)
 }
 
 /** Inline handler config */
@@ -69,6 +71,7 @@ export interface InlineHandlerConfig {
   timeout?: number;
   enabled?: boolean;
   sessionIsolation?: boolean; // Reset handler state on SessionStart
+  depends?: string[];  // handler IDs this handler depends on (executed after them)
 }
 
 /** Union of all handler configs */
@@ -152,4 +155,27 @@ export interface DiagnosticResult {
   check: string;
   status: 'ok' | 'warn' | 'error';
   message: string;
+}
+
+/** Plugin manifest (clooks-plugin.yaml) */
+export interface PluginManifest {
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  handlers: Partial<Record<HookEvent, HandlerConfig[]>>;
+  prefetch?: PrefetchKey[];
+}
+
+/** Installed plugin registry entry */
+export interface InstalledPlugin {
+  name: string;
+  version: string;
+  path: string;           // absolute path to plugin directory
+  installedAt: string;    // ISO timestamp
+}
+
+/** Plugin registry file format (installed.json) */
+export interface PluginRegistry {
+  plugins: InstalledPlugin[];
 }
