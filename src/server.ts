@@ -15,6 +15,23 @@ import { DEFAULT_PORT, PID_FILE, LOG_FILE, CONFIG_DIR, HOOK_EVENTS, MANIFEST_PAT
 import { loadManifest, loadCompositeManifest } from './manifest.js';
 import type { Manifest, HookEvent, HookInput, HandlerResult, HandlerConfig, PrefetchContext, CostEntry } from './types.js';
 
+/** Session agent cache: session_id → { agent_type, timestamp } */
+const sessionAgents = new Map<string, { agent: string; ts: number }>();
+
+const SESSION_AGENT_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+function cleanupSessionAgents(): void {
+  const now = Date.now();
+  for (const [id, entry] of sessionAgents) {
+    if (now - entry.ts > SESSION_AGENT_TTL) {
+      sessionAgents.delete(id);
+    }
+  }
+}
+
+/** Exported for testing */
+export { sessionAgents };
+
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
   try {
@@ -119,6 +136,7 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
   ctx.cleanupInterval = setInterval(() => {
     denyCache.cleanup();
     rateLimiter.cleanup();
+    cleanupSessionAgents();
   }, 60_000);
   // Unref so it doesn't keep the process alive
   if (ctx.cleanupInterval && typeof ctx.cleanupInterval === 'object' && 'unref' in ctx.cleanupInterval) {
@@ -195,7 +213,7 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
 
       const event = eventName as HookEvent;
 
-      // On SessionStart, reset session-isolated handlers across ALL events
+      // On SessionStart, cache agent and reset session-isolated handlers
       if (event === 'SessionStart') {
         const allHandlers = Object.values(ctx.manifest.handlers)
           .flat()
@@ -219,6 +237,14 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
         sendJson(res, 400, { error: 'Invalid JSON body' });
         return;
       }
+
+      // Cache agent_type on SessionStart
+      if (event === 'SessionStart' && input.agent_type && input.session_id) {
+        sessionAgents.set(input.session_id, { agent: input.agent_type, ts: Date.now() });
+      }
+
+      // Resolve current agent for this session
+      const currentAgent = input.session_id ? sessionAgents.get(input.session_id)?.agent : undefined;
 
       // Short-circuit: skip PostToolUse if PreToolUse denied this tool
       if (event === 'PostToolUse' && input.tool_name && input.session_id) {
@@ -277,7 +303,7 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
           }
         };
 
-        const results = await executeHandlers(event, input, allHandlerConfigs, context, recordResult);
+        const results = await executeHandlers(event, input, allHandlerConfigs, context, recordResult, currentAgent);
 
         // Record metrics and costs for sync results
         for (const result of results) {

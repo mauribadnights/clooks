@@ -89,6 +89,16 @@ export function validateManifest(manifest: Manifest): void {
       if ('async' in handler && typeof handler.async !== 'boolean') {
         throw new Error(`Handler "${handler.id}" async field must be a boolean`);
       }
+
+      // Validate agent field type
+      if ('agent' in handler && typeof (handler as unknown as { agent: unknown }).agent !== 'string') {
+        throw new Error(`Handler "${handler.id}" agent field must be a string`);
+      }
+
+      // Validate project field type
+      if ('project' in handler && typeof (handler as unknown as { project: unknown }).project !== 'string') {
+        throw new Error(`Handler "${handler.id}" project field must be a string`);
+      }
     }
 
     // Warn about async handlers with dependency relationships

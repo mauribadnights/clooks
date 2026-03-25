@@ -24,6 +24,7 @@ export interface HookInput {
   tool_name?: string;                     // Pre/PostToolUse
   tool_input?: Record<string, unknown>;   // Pre/PostToolUse
   source?: string;                        // SessionStart
+  agent_type?: string;                    // SessionStart — active agent name
   stop_hook_active?: boolean;             // Stop
   [key: string]: unknown;                 // extensible
 }
@@ -49,6 +50,8 @@ export interface LLMHandlerConfig {
   sessionIsolation?: boolean; // Reset handler state on SessionStart
   depends?: string[];  // handler IDs this handler depends on (executed after them)
   async?: boolean;     // Fire-and-forget — don't await, don't include in response
+  agent?: string;      // Only fire when session's agent matches (e.g., "builder", "coo")
+  project?: string;    // Glob pattern matched against cwd (e.g., "*/Driffusion/*")
 }
 
 /** Script handler config */
@@ -62,6 +65,8 @@ export interface ScriptHandlerConfig {
   sessionIsolation?: boolean; // Reset handler state on SessionStart
   depends?: string[];  // handler IDs this handler depends on (executed after them)
   async?: boolean;     // Fire-and-forget — don't await, don't include in response
+  agent?: string;      // Only fire when session's agent matches (e.g., "builder", "coo")
+  project?: string;    // Glob pattern matched against cwd (e.g., "*/Driffusion/*")
 }
 
 /** Inline handler config */
@@ -75,6 +80,8 @@ export interface InlineHandlerConfig {
   sessionIsolation?: boolean; // Reset handler state on SessionStart
   depends?: string[];  // handler IDs this handler depends on (executed after them)
   async?: boolean;     // Fire-and-forget — don't await, don't include in response
+  agent?: string;      // Only fire when session's agent matches (e.g., "builder", "coo")
+  project?: string;    // Glob pattern matched against cwd (e.g., "*/Driffusion/*")
 }
 
 /** Union of all handler configs */

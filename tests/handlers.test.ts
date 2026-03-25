@@ -5,6 +5,8 @@ import {
   resetHandlerStates,
   getHandlerStates,
   resetSessionIsolatedHandlers,
+  matchAgent,
+  matchProject,
 } from '../src/handlers.js';
 import type { HandlerConfig, HandlerResult, HookInput } from '../src/types.js';
 
@@ -320,6 +322,161 @@ describe('handlers', () => {
       expect(results).toHaveLength(2);
       expect(results.find(r => r.id === 'async-depended')).toBeDefined();
       expect(results.find(r => r.id === 'sync-dependent')).toBeDefined();
+    });
+  });
+
+  describe('agent matching', () => {
+    it('fires handler when agent matches', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'builder-only', type: 'script', command: 'echo ok', agent: 'builder' },
+      ];
+
+      const results = await executeHandlers('PostToolUse', makeInput(), handlers, undefined, undefined, 'builder');
+
+      expect(results).toHaveLength(1);
+      expect(results[0].ok).toBe(true);
+      expect(results[0].filtered).toBeUndefined();
+    });
+
+    it('skips handler when agent does not match', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'builder-only', type: 'script', command: 'echo ok', agent: 'builder' },
+      ];
+
+      const results = await executeHandlers('PostToolUse', makeInput(), handlers, undefined, undefined, 'coo');
+
+      expect(results).toHaveLength(1);
+      expect(results[0].filtered).toBe(true);
+      expect(results[0].duration_ms).toBe(0);
+    });
+
+    it('skips handler when no agent is active', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'builder-only', type: 'script', command: 'echo ok', agent: 'builder' },
+      ];
+
+      const results = await executeHandlers('PostToolUse', makeInput(), handlers);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].filtered).toBe(true);
+    });
+
+    it('fires handler with comma-separated agents matching either', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'multi-agent', type: 'script', command: 'echo ok', agent: 'builder,coo' },
+      ];
+
+      const resultBuilder = await executeHandlers('PostToolUse', makeInput(), handlers, undefined, undefined, 'builder');
+      expect(resultBuilder).toHaveLength(1);
+      expect(resultBuilder[0].ok).toBe(true);
+      expect(resultBuilder[0].filtered).toBeUndefined();
+
+      resetHandlerStates();
+
+      const resultCoo = await executeHandlers('PostToolUse', makeInput(), handlers, undefined, undefined, 'coo');
+      expect(resultCoo).toHaveLength(1);
+      expect(resultCoo[0].ok).toBe(true);
+      expect(resultCoo[0].filtered).toBeUndefined();
+    });
+
+    it('agent matching is case-insensitive', () => {
+      expect(matchAgent('Builder', 'builder')).toBe(true);
+      expect(matchAgent('builder', 'BUILDER')).toBe(true);
+    });
+  });
+
+  describe('project matching', () => {
+    it('fires handler when project pattern matches cwd', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'driffusion-only', type: 'script', command: 'echo ok', project: '*/Driffusion/*' },
+      ];
+
+      const results = await executeHandlers(
+        'PostToolUse',
+        makeInput({ cwd: '/Users/mauricio/Mindicio/Areas/Driffusion/code' }),
+        handlers,
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0].ok).toBe(true);
+      expect(results[0].filtered).toBeUndefined();
+    });
+
+    it('skips handler when project pattern does not match cwd', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'driffusion-only', type: 'script', command: 'echo ok', project: '*/Driffusion/*' },
+      ];
+
+      const results = await executeHandlers(
+        'PostToolUse',
+        makeInput({ cwd: '/Users/mauricio/Mindicio/Areas/Master/code' }),
+        handlers,
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0].filtered).toBe(true);
+      expect(results[0].duration_ms).toBe(0);
+    });
+
+    it('exact path match works without wildcards', () => {
+      expect(matchProject('/Users/mauricio/projects/myapp', '/Users/mauricio/projects/myapp')).toBe(true);
+      expect(matchProject('/Users/mauricio/projects/myapp', '/Users/mauricio/projects/other')).toBe(false);
+    });
+
+    it('prefix match works without wildcards', () => {
+      expect(matchProject('/Users/mauricio/projects', '/Users/mauricio/projects/myapp')).toBe(true);
+    });
+  });
+
+  describe('combined agent + project + filter', () => {
+    it('fires when all conditions match', async () => {
+      const handlers: HandlerConfig[] = [
+        {
+          id: 'scoped',
+          type: 'script',
+          command: 'echo ok',
+          agent: 'builder',
+          project: '*/Driffusion/*',
+          filter: 'Bash',
+        },
+      ];
+
+      const results = await executeHandlers(
+        'PreToolUse',
+        makeInput({ cwd: '/home/user/Driffusion/code', tool_name: 'Bash', hook_event_name: 'PreToolUse' }),
+        handlers,
+        undefined,
+        undefined,
+        'builder',
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0].ok).toBe(true);
+      expect(results[0].filtered).toBeUndefined();
+    });
+
+    it('skips when agent matches but project does not', async () => {
+      const handlers: HandlerConfig[] = [
+        {
+          id: 'scoped',
+          type: 'script',
+          command: 'echo ok',
+          agent: 'builder',
+          project: '*/Driffusion/*',
+        },
+      ];
+
+      const results = await executeHandlers(
+        'PostToolUse',
+        makeInput({ cwd: '/home/user/OtherProject/code' }),
+        handlers,
+        undefined,
+        undefined,
+        'builder',
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0].filtered).toBe(true);
     });
   });
 

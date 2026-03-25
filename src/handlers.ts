@@ -9,6 +9,27 @@ import { executeLLMHandlersBatched } from './llm.js';
 import { resolveExecutionOrder } from './deps.js';
 import type { HandlerConfig, ScriptHandlerConfig, InlineHandlerConfig, LLMHandlerConfig, HandlerResult, HandlerState, HookEvent, HookInput, PrefetchContext } from './types.js';
 
+/** Match handler agent field against current session agent (case-insensitive, comma-separated) */
+function matchAgent(pattern: string, currentAgent: string): boolean {
+  const agents = pattern.split(',').map(a => a.trim().toLowerCase());
+  return agents.includes(currentAgent.toLowerCase());
+}
+
+/** Match handler project field against cwd path */
+function matchProject(pattern: string, cwd: string): boolean {
+  if (!cwd) return false;
+  // If pattern has wildcards, extract the literal parts and check includes
+  if (pattern.includes('*')) {
+    const parts = pattern.split('*').filter(Boolean);
+    return parts.every(part => cwd.includes(part));
+  }
+  // Exact match or prefix match
+  return cwd.startsWith(pattern) || cwd === pattern;
+}
+
+/** Exported for testing */
+export { matchAgent, matchProject };
+
 /** Runtime state per handler ID */
 const handlerStates = new Map<string, HandlerState>();
 
@@ -65,7 +86,8 @@ export async function executeHandlers(
   input: HookInput,
   handlers: HandlerConfig[],
   context?: PrefetchContext,
-  onAsyncResult?: (result: HandlerResult) => void
+  onAsyncResult?: (result: HandlerResult) => void,
+  currentAgent?: string
 ): Promise<HandlerResult[]> {
   // Pre-check: filter out disabled/auto-disabled/filtered handlers before dep resolution
   const eligible: HandlerConfig[] = [];
@@ -86,6 +108,22 @@ export async function executeHandlers(
         duration_ms: 0,
       });
       continue;
+    }
+
+    // Agent matching
+    if (handler.agent) {
+      if (!currentAgent || !matchAgent(handler.agent, currentAgent)) {
+        skippedResults.push({ id: handler.id, ok: true, duration_ms: 0, filtered: true });
+        continue;
+      }
+    }
+
+    // Project matching (glob against cwd)
+    if (handler.project) {
+      if (!matchProject(handler.project, input.cwd)) {
+        skippedResults.push({ id: handler.id, ok: true, duration_ms: 0, filtered: true });
+        continue;
+      }
     }
 
     if (handler.filter) {
