@@ -119,28 +119,31 @@ export default async function(input: HookInput) {
 
 ## LLM Handlers
 
-LLM handlers call the Anthropic Messages API with prompt templates. They require no scripts -- the prompt is defined directly in the manifest.
+LLM handlers run AI-powered analysis with prompt templates. They support two backends: the Anthropic Messages API (`api`, default) and Claude Code CLI spawn (`claude-code`).
 
 ### How They Work
 
 1. The handler's `prompt` template is rendered by replacing `$VARIABLES` with actual values.
-2. The rendered prompt is sent to the Anthropic API using the specified `model`.
-3. The response text is returned as `{"additionalContext": "..."}`.
+2. **API backend:** The rendered prompt is sent to the Anthropic API using the specified `model`.
+3. **Claude Code backend:** The rendered prompt is passed to `claude -p`, optionally with `--agent` and `--model`.
+4. The response text is returned as `{"additionalContext": "..."}`.
 
 ### Required Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `model` | string | `claude-haiku-4-5`, `claude-sonnet-4-6`, or `claude-opus-4-6` |
 | `prompt` | string | Prompt template with `$VARIABLE` interpolation |
+| `model` | string | `claude-haiku-4-5`, `claude-sonnet-4-6`, or `claude-opus-4-6`. Required for `api` backend, optional for `claude-code`. |
 
 ### Optional Fields
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `maxTokens` | number | 1024 | Maximum tokens in the API response |
+| `backend` | string | `api` | `api` (Anthropic API) or `claude-code` (CLI spawn) |
+| `llmAgent` | string | — | Agent name for `claude-code` backend (`--agent` flag) |
+| `maxTokens` | number | 1024 | Maximum tokens in the response |
 | `temperature` | number | 1.0 | Sampling temperature |
-| `batchGroup` | string | — | Group ID for batching multiple handlers into one API call |
+| `batchGroup` | string | — | Group ID for batching into one API call (`api` backend only) |
 
 ### Default Timeout
 
@@ -166,6 +169,7 @@ prefetch:
 
 handlers:
   PreToolUse:
+    # API backend (default) — fast, supports batching and cost tracking
     - id: code-reviewer
       type: llm
       model: claude-haiku-4-5
@@ -178,9 +182,17 @@ handlers:
         If there is a problem, explain it briefly. Otherwise say "Looks good."
       filter: "Write|Edit"
       maxTokens: 256
+
+    # Claude Code backend — supports agents, no API key needed
+    - id: agent-review
+      type: llm
+      backend: claude-code
+      llmAgent: security-reviewer
+      prompt: "Audit this tool call for security issues: $TOOL_NAME $ARGUMENTS"
+      filter: "Bash|Write"
 ```
 
-See [LLM Handlers](llm-handlers.md) for batching, cost tracking, and advanced usage.
+See [LLM Handlers](llm-handlers.md) for backends, batching, cost tracking, and advanced usage.
 
 ## Handler Output Format
 

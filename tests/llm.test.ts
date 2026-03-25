@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { EventEmitter } from 'events';
 import type { LLMHandlerConfig, HookInput, PrefetchContext } from '../src/types.js';
 
 // Mock the Anthropic SDK before any imports that use it
@@ -8,6 +9,16 @@ vi.mock('@anthropic-ai/sdk', () => ({
     messages = { create: mockCreate };
   },
 }));
+
+// Mock child_process.spawn for claude-code tests
+const mockSpawn = vi.fn();
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    spawn: (...args: any[]) => mockSpawn(...args),
+  };
+});
 
 // Must import after mock is set up
 const { executeLLMHandler, executeLLMHandlersBatched, calculateCost, resetClient } = await import('../src/llm.js');
@@ -349,5 +360,136 @@ describe('calculateCost', () => {
 
   it('unknown model returns zero cost', () => {
     expect(calculateCost('unknown-model', { input_tokens: 1000, output_tokens: 1000 })).toBe(0);
+  });
+});
+
+describe('claude-code backend', () => {
+  function createMockProcess(exitCode: number, stdout: string, stderr = '') {
+    const proc = new EventEmitter() as any;
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.stdin = { write: vi.fn(), end: vi.fn() };
+    proc.kill = vi.fn();
+
+    // Emit data and close asynchronously
+    setTimeout(() => {
+      if (stdout) proc.stdout.emit('data', Buffer.from(stdout));
+      if (stderr) proc.stderr.emit('data', Buffer.from(stderr));
+      proc.emit('close', exitCode);
+    }, 5);
+
+    return proc;
+  }
+
+  beforeEach(() => {
+    mockSpawn.mockReset();
+  });
+
+  it('spawns claude CLI with -p flag and returns output', async () => {
+    mockSpawn.mockReturnValue(createMockProcess(0, 'Analysis complete'));
+
+    const handler = makeHandler({
+      backend: 'claude-code',
+      prompt: 'Analyze $TOOL_NAME',
+    });
+    const result = await executeLLMHandler(handler, makeInput(), emptyContext);
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toEqual({ additionalContext: 'Analysis complete' });
+    expect(mockSpawn).toHaveBeenCalledWith(
+      'claude',
+      expect.arrayContaining(['-p', expect.any(String), '--output-format', 'text']),
+      expect.any(Object),
+    );
+  });
+
+  it('passes --agent flag when llmAgent is set', async () => {
+    mockSpawn.mockReturnValue(createMockProcess(0, 'Agent result'));
+
+    const handler = makeHandler({
+      backend: 'claude-code',
+      llmAgent: 'reviewer',
+      prompt: 'Review this',
+    });
+    await executeLLMHandler(handler, makeInput(), emptyContext);
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).toContain('--agent');
+    expect(args[args.indexOf('--agent') + 1]).toBe('reviewer');
+  });
+
+  it('passes --model flag when model is set', async () => {
+    mockSpawn.mockReturnValue(createMockProcess(0, 'ok'));
+
+    const handler = makeHandler({
+      backend: 'claude-code',
+      model: 'claude-sonnet-4-6',
+      prompt: 'test',
+    });
+    await executeLLMHandler(handler, makeInput(), emptyContext);
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).toContain('--model');
+    expect(args[args.indexOf('--model') + 1]).toBe('claude-sonnet-4-6');
+  });
+
+  it('returns error on non-zero exit code', async () => {
+    mockSpawn.mockReturnValue(createMockProcess(1, '', 'command failed'));
+
+    const handler = makeHandler({ backend: 'claude-code', prompt: 'test' });
+    const result = await executeLLMHandler(handler, makeInput(), emptyContext);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('exit code 1');
+    expect(result.error).toContain('command failed');
+  });
+
+  it('returns error on spawn failure', async () => {
+    const proc = new EventEmitter() as any;
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.stdin = { write: vi.fn(), end: vi.fn() };
+    proc.kill = vi.fn();
+    mockSpawn.mockReturnValue(proc);
+
+    const handler = makeHandler({ backend: 'claude-code', prompt: 'test' });
+    const resultPromise = executeLLMHandler(handler, makeInput(), emptyContext);
+
+    setTimeout(() => proc.emit('error', new Error('spawn ENOENT')), 5);
+
+    const result = await resultPromise;
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('spawn ENOENT');
+  });
+
+  it('has no usage or cost tracking', async () => {
+    mockSpawn.mockReturnValue(createMockProcess(0, 'result'));
+
+    const handler = makeHandler({ backend: 'claude-code', prompt: 'test' });
+    const result = await executeLLMHandler(handler, makeInput(), emptyContext);
+
+    expect(result.ok).toBe(true);
+    expect(result.usage).toBeUndefined();
+    expect(result.cost_usd).toBeUndefined();
+  });
+
+  it('claude-code handlers skip batching even with batchGroup', async () => {
+    mockSpawn.mockReturnValue(createMockProcess(0, 'result'));
+
+    const handlers = [
+      makeHandler({ id: 'cc1', backend: 'claude-code', batchGroup: 'grp', prompt: 'Task 1' }),
+      makeHandler({ id: 'cc2', backend: 'claude-code', batchGroup: 'grp', prompt: 'Task 2' }),
+    ];
+
+    // Need to return a fresh process for each spawn call
+    mockSpawn
+      .mockReturnValueOnce(createMockProcess(0, 'result1'))
+      .mockReturnValueOnce(createMockProcess(0, 'result2'));
+
+    const results = await executeLLMHandlersBatched(handlers, makeInput(), emptyContext);
+
+    expect(results).toHaveLength(2);
+    // Each should have been spawned individually (2 spawn calls, not batched)
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
   });
 });

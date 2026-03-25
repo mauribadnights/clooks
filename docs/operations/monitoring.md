@@ -37,7 +37,7 @@ clooks stats | less      # Auto-detects piped output, switches to text
 
 ## Cost Tracking
 
-LLM handler costs are logged to `~/.clooks/costs.jsonl`, rotated at 1MB.
+LLM handler costs (API backend only) are logged to `~/.clooks/costs.jsonl`, rotated at 1MB. Handlers using the `claude-code` backend do not produce cost entries — usage is billed through the Claude Code subscription.
 
 ```bash
 clooks costs

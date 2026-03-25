@@ -137,7 +137,9 @@ Run `clooks doctor` to validate your manifest structure. The validator enforces:
 - Handler IDs must be unique across the entire manifest (not just within an event).
 - Script handlers must have a `command` field.
 - Inline handlers must have a `module` field.
-- LLM handlers must have both `model` and `prompt` fields. Model must be one of: `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-6`.
+- LLM handlers must have a `prompt` field. The `model` field is required for the `api` backend (default) and optional for `claude-code`. Model must be one of: `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-6`.
+- LLM handler `backend` must be `api` or `claude-code` (if specified).
+- `llmAgent` is only valid when `backend` is `claude-code`.
 - `prefetch` must be an array containing only valid keys: `transcript`, `git_status`, `git_diff`.
 - `settings.port` must be a number between 1 and 65535.
 - `settings.logLevel` must be one of: `debug`, `info`, `warn`, `error`.
@@ -210,6 +212,13 @@ handlers:
         Context from prior checks available in input.
       depends: [write-review, style-check]
       filter: "Write"
+
+    - id: agent-audit
+      type: llm
+      backend: claude-code
+      llmAgent: security-reviewer
+      prompt: "Audit this Bash command for security: $ARGUMENTS"
+      filter: "Bash"
 
   PostToolUse:
     - id: metrics-collector

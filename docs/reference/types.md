@@ -90,11 +90,13 @@ interface InlineHandlerConfig extends BaseHandler {
 
 interface LLMHandlerConfig extends BaseHandler {
   type: 'llm';
-  model: LLMModel;
+  model?: LLMModel;         // Required for 'api' backend, optional for 'claude-code'
   prompt: string;
-  batchGroup?: string;
-  maxTokens?: number;      // Default: 1024
-  temperature?: number;    // Default: 1.0
+  backend?: LLMBackend;     // Default: 'api'
+  llmAgent?: string;        // Agent name for 'claude-code' backend (--agent flag)
+  batchGroup?: string;      // 'api' backend only
+  maxTokens?: number;       // Default: 1024
+  temperature?: number;     // Default: 1.0
 }
 
 type HandlerConfig = ScriptHandlerConfig | InlineHandlerConfig | LLMHandlerConfig;
@@ -105,6 +107,15 @@ type HandlerConfig = ScriptHandlerConfig | InlineHandlerConfig | LLMHandlerConfi
 ```typescript
 type LLMModel = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-6';
 ```
+
+### LLMBackend
+
+```typescript
+type LLMBackend = 'api' | 'claude-code';
+```
+
+- `api` — Direct Anthropic Messages API call. Supports batching and cost tracking. Requires `ANTHROPIC_API_KEY` and the `@anthropic-ai/sdk` package.
+- `claude-code` — Spawns `claude -p "prompt"`. Supports `llmAgent` for agent-based execution. No API key or SDK required.
 
 ### HandlerResult
 

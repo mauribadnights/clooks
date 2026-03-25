@@ -64,7 +64,7 @@ All configuration, state, and data files used by clooks, with their locations, f
 
 ## Cost File Format
 
-`costs.jsonl` tracks LLM-specific cost data, one entry per LLM handler invocation.
+`costs.jsonl` tracks LLM-specific cost data, one entry per LLM handler invocation using the `api` backend. Handlers using the `claude-code` backend do not produce cost entries.
 
 ```json
 {

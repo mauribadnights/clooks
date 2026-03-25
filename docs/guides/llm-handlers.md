@@ -1,15 +1,56 @@
 # LLM Handlers
 
-LLM handlers call the Anthropic Messages API directly from the manifest, with prompt templates, automatic batching, and cost tracking. This guide covers advanced usage beyond the basics in [Handlers](handlers.md).
+LLM handlers run AI-powered analysis from the manifest, with prompt templates, automatic batching, and cost tracking. Two backends are available: the **Anthropic Messages API** (default) and **Claude Code CLI** spawn. This guide covers advanced usage beyond the basics in [Handlers](handlers.md).
 
-## Basics
+## Backends
 
-LLM handlers require an Anthropic API key. Provide it in one of two ways:
+LLM handlers support two execution backends via the `backend` field:
+
+| Backend | Value | Description |
+|---------|-------|-------------|
+| Anthropic API | `api` (default) | Direct API call. Supports batching, cost tracking, token usage. Requires API key and SDK. |
+| Claude Code CLI | `claude-code` | Spawns `claude -p "prompt"`. Supports agents. No API key needed — uses your Claude Code subscription. |
+
+### API Backend (default)
+
+The `api` backend requires an Anthropic API key. Provide it in one of two ways:
 
 1. **Environment variable:** `ANTHROPIC_API_KEY=sk-ant-...`
 2. **Manifest setting:** `settings.anthropicApiKey: sk-ant-...`
 
 The Anthropic SDK is lazy-loaded on the first LLM handler invocation. If the SDK is not installed, the handler fails with an actionable error message.
+
+### Claude Code Backend
+
+The `claude-code` backend spawns a `claude` CLI process. It requires the Claude Code CLI to be installed and authenticated. No API key or SDK is needed.
+
+```yaml
+- id: deep-review
+  type: llm
+  backend: claude-code
+  prompt: "Review this tool call: $TOOL_NAME $ARGUMENTS"
+```
+
+Key differences from the API backend:
+
+- **No cost tracking** — usage is billed through your Claude Code subscription, not per-token.
+- **No batching** — each handler spawns its own `claude` process. `batchGroup` is ignored.
+- **Agent support** — use `llmAgent` to run the prompt with a specific agent.
+- **Model is optional** — omit `model` to use Claude Code's default, or specify one to override.
+
+#### Using Agents
+
+The `llmAgent` field passes `--agent <name>` to the Claude Code CLI, running the prompt with a specific agent's instructions and tools:
+
+```yaml
+- id: agent-review
+  type: llm
+  backend: claude-code
+  llmAgent: security-reviewer
+  prompt: "Audit this change for vulnerabilities: $ARGUMENTS"
+```
+
+> **Note:** `llmAgent` is only valid with `backend: claude-code`. Using it with the `api` backend produces a validation error.
 
 ### Supported Models
 
@@ -18,6 +59,8 @@ The Anthropic SDK is lazy-loaded on the first LLM handler invocation. If the SDK
 | `claude-haiku-4-5` | Fast, cheap checks (guards, simple reviews) |
 | `claude-sonnet-4-6` | Balanced analysis (code review, context synthesis) |
 | `claude-opus-4-6` | Deep reasoning (security audits, architecture review) |
+
+`model` is required for the `api` backend. For `claude-code`, it is optional — when provided, it is passed as `--model` to the CLI.
 
 ## Prompt Templates
 
@@ -56,9 +99,9 @@ handlers:
         Flag any issues. Be concise.
 ```
 
-## Batching
+## Batching (API Backend Only)
 
-Handlers with the same `batchGroup` value that fire on the same event are combined into a single API call. This reduces latency and cost when multiple LLM handlers need to analyze the same context.
+Handlers with the same `batchGroup` value that fire on the same event are combined into a single API call. This reduces latency and cost when multiple LLM handlers need to analyze the same context. Batching only applies to handlers using the `api` backend — `claude-code` handlers always execute individually.
 
 ### How It Works
 
@@ -128,15 +171,28 @@ Pricing per million tokens (as of March 2026):
 
 For batched calls, the total token cost is split evenly across all handlers in the group.
 
+## Choosing a Backend
+
+| Consideration | `api` | `claude-code` |
+|---------------|-------|---------------|
+| Latency | Lower (direct HTTP) | Higher (process spawn) |
+| Cost model | Per-token (tracked) | Subscription (not tracked) |
+| Batching | Yes | No |
+| Agent support | No | Yes (`llmAgent`) |
+| Requires API key | Yes | No |
+| Requires SDK | Yes | No |
+
+**Use `api`** for high-frequency, latency-sensitive handlers (guards, quick checks). **Use `claude-code`** when you need agent capabilities, don't want to manage API keys, or want handlers to use your subscription.
+
 ## Best Practices
 
 **Use Haiku for simple checks.** Guards, keyword detection, and light reviews run well on Haiku at a fraction of the cost. Reserve Sonnet and Opus for tasks that require deeper reasoning.
 
-**Use batchGroup to combine related analyses.** If two handlers analyze the same tool call from different angles, batching them saves an API round-trip and reduces total tokens (the shared context is sent once).
+**Use batchGroup to combine related analyses.** If two handlers analyze the same tool call from different angles, batching them saves an API round-trip and reduces total tokens (the shared context is sent once). Only applies to the `api` backend.
 
 **Set maxTokens conservatively.** Most handler responses are short. Setting `maxTokens: 256` or `maxTokens: 512` prevents runaway token usage on verbose responses.
 
-**Use filter to avoid unnecessary API calls.** An LLM handler without a filter fires on every matching event. Adding `filter: "Write|Edit"` ensures the API is only called when relevant tools are invoked.
+**Use filter to avoid unnecessary calls.** An LLM handler without a filter fires on every matching event. Adding `filter: "Write|Edit"` ensures the handler is only invoked when relevant tools are used.
 
 **Prefer prefetch over inline context.** If your prompt needs git status or the transcript, add the key to `prefetch` rather than running shell commands in a script handler. Prefetched data is fetched once and shared across all handlers.
 

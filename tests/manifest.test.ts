@@ -221,4 +221,83 @@ describe('manifest', () => {
       expect(() => validateManifest(null as any)).toThrow();
     });
   });
+
+  describe('LLM handler validation', () => {
+    it('accepts api backend LLM handler with model', () => {
+      const manifest: Manifest = {
+        handlers: {
+          PreToolUse: [
+            { id: 'llm-api', type: 'llm', model: 'claude-haiku-4-5', prompt: 'test' } as any,
+          ],
+        },
+      };
+      expect(() => validateManifest(manifest)).not.toThrow();
+    });
+
+    it('accepts claude-code backend without model', () => {
+      const manifest: Manifest = {
+        handlers: {
+          PreToolUse: [
+            { id: 'llm-cc', type: 'llm', backend: 'claude-code', prompt: 'test' } as any,
+          ],
+        },
+      };
+      expect(() => validateManifest(manifest)).not.toThrow();
+    });
+
+    it('accepts claude-code backend with llmAgent', () => {
+      const manifest: Manifest = {
+        handlers: {
+          PreToolUse: [
+            { id: 'llm-agent', type: 'llm', backend: 'claude-code', llmAgent: 'reviewer', prompt: 'test' } as any,
+          ],
+        },
+      };
+      expect(() => validateManifest(manifest)).not.toThrow();
+    });
+
+    it('accepts claude-code backend with model', () => {
+      const manifest: Manifest = {
+        handlers: {
+          PreToolUse: [
+            { id: 'llm-cc-model', type: 'llm', backend: 'claude-code', model: 'claude-sonnet-4-6', prompt: 'test' } as any,
+          ],
+        },
+      };
+      expect(() => validateManifest(manifest)).not.toThrow();
+    });
+
+    it('rejects api backend without model', () => {
+      const manifest: Manifest = {
+        handlers: {
+          PreToolUse: [
+            { id: 'llm-no-model', type: 'llm', prompt: 'test' } as any,
+          ],
+        },
+      };
+      expect(() => validateManifest(manifest)).toThrow('must have a "model" field');
+    });
+
+    it('rejects invalid backend value', () => {
+      const manifest: Manifest = {
+        handlers: {
+          PreToolUse: [
+            { id: 'llm-bad', type: 'llm', backend: 'openai', model: 'claude-haiku-4-5', prompt: 'test' } as any,
+          ],
+        },
+      };
+      expect(() => validateManifest(manifest)).toThrow('backend must be one of');
+    });
+
+    it('rejects llmAgent without claude-code backend', () => {
+      const manifest: Manifest = {
+        handlers: {
+          PreToolUse: [
+            { id: 'llm-agent-api', type: 'llm', model: 'claude-haiku-4-5', llmAgent: 'reviewer', prompt: 'test' } as any,
+          ],
+        },
+      };
+      expect(() => validateManifest(manifest)).toThrow('llmAgent requires backend: claude-code');
+    });
+  });
 });

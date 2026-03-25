@@ -38,7 +38,8 @@ clooks daemon (localhost:7890)
     +-- Execute each wave
     |   +-- Script handlers: spawn sh -c, pipe JSON stdin
     |   +-- Inline handlers: dynamic ES module import
-    |   +-- LLM handlers: Anthropic API (batched by group)
+    |   +-- LLM handlers (api): Anthropic API (batched by group)
+    |   +-- LLM handlers (claude-code): spawn claude CLI (with optional --agent)
     |
     +-- Record metrics + costs
     +-- Track deny decisions (short-circuit cache)
@@ -68,9 +69,9 @@ Dependency resolution produces "waves" — groups of handlers that can run in pa
 - **Correct ordering** across waves
 - **Data flow** — outputs from earlier waves are available to later waves
 
-### LLM Batching
+### LLM Batching (API Backend)
 
-Multiple LLM handlers with the same `batchGroup` are combined into a single API call. One prompt with multiple tasks, one response parsed and distributed. This typically halves cost and latency for multi-handler analysis.
+Multiple LLM handlers using the `api` backend with the same `batchGroup` are combined into a single API call. One prompt with multiple tasks, one response parsed and distributed. This typically halves cost and latency for multi-handler analysis. Handlers using the `claude-code` backend always execute individually.
 
 ### Hot Reload
 
@@ -90,7 +91,8 @@ When a PreToolUse handler blocks a tool, PostToolUse is skipped. The denial is c
 - **Main process:** HTTP server, manifest loading, file watching, metric collection
 - **Script handlers:** Spawned as child processes (`sh -c`), piped JSON on stdin/stdout
 - **Inline handlers:** Loaded as ES modules in the main process (no subprocess)
-- **LLM handlers:** Async HTTP calls to Anthropic API from the main process
+- **LLM handlers (api):** Async HTTP calls to Anthropic API from the main process
+- **LLM handlers (claude-code):** Spawned as `claude -p` child processes (with optional `--agent`)
 
 ## Resilience
 

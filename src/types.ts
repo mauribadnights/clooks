@@ -32,6 +32,9 @@ export interface HookInput {
 /** Supported LLM models */
 export type LLMModel = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-6';
 
+/** LLM execution backend */
+export type LLMBackend = 'api' | 'claude-code';
+
 /** Handler types — extended with 'llm' */
 export type HandlerType = 'script' | 'inline' | 'llm';
 
@@ -39,8 +42,10 @@ export type HandlerType = 'script' | 'inline' | 'llm';
 export interface LLMHandlerConfig {
   id: string;
   type: 'llm';
-  model: LLMModel;
+  model?: LLMModel;          // Required for 'api' backend, optional for 'claude-code'
   prompt: string;            // Prompt template with $VARIABLE interpolation
+  backend?: LLMBackend;      // 'api' (default) or 'claude-code' (spawn claude CLI)
+  llmAgent?: string;         // Agent name for claude-code backend (--agent flag)
   batchGroup?: string;       // Group ID — LLM handlers with same group are batched into one call
   maxTokens?: number;        // Default 1024
   temperature?: number;      // Default 1.0

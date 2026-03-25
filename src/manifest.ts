@@ -73,15 +73,41 @@ export function validateManifest(manifest: Manifest): void {
 
       if (handler.type === 'llm') {
         const llm = handler as import('./types.js').LLMHandlerConfig;
-        if (!llm.model) {
-          throw new Error(`LLM handler "${handler.id}" must have a "model" field`);
-        }
         if (!llm.prompt) {
           throw new Error(`LLM handler "${handler.id}" must have a "prompt" field`);
         }
-        const validModels = ['claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-6'];
-        if (!validModels.includes(llm.model)) {
-          throw new Error(`LLM handler "${handler.id}" model must be one of: ${validModels.join(', ')}`);
+
+        // Validate backend
+        const validBackends = ['api', 'claude-code'];
+        if (llm.backend && !validBackends.includes(llm.backend)) {
+          throw new Error(`LLM handler "${handler.id}" backend must be one of: ${validBackends.join(', ')}`);
+        }
+
+        // llmAgent is only valid with claude-code backend
+        if (llm.llmAgent && llm.backend !== 'claude-code') {
+          throw new Error(`LLM handler "${handler.id}" llmAgent requires backend: claude-code`);
+        }
+
+        // model is required for api backend, optional for claude-code
+        if (llm.backend !== 'claude-code') {
+          if (!llm.model) {
+            throw new Error(`LLM handler "${handler.id}" must have a "model" field`);
+          }
+          const validModels = ['claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-6'];
+          if (!validModels.includes(llm.model)) {
+            throw new Error(`LLM handler "${handler.id}" model must be one of: ${validModels.join(', ')}`);
+          }
+        } else if (llm.model) {
+          // claude-code backend with explicit model — still validate it
+          const validModels = ['claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-6'];
+          if (!validModels.includes(llm.model)) {
+            throw new Error(`LLM handler "${handler.id}" model must be one of: ${validModels.join(', ')}`);
+          }
+        }
+
+        // batchGroup is incompatible with claude-code backend
+        if (llm.batchGroup && llm.backend === 'claude-code') {
+          console.warn(`[clooks] Warning: LLM handler "${handler.id}" has batchGroup but uses claude-code backend — batching will be ignored`);
         }
       }
 

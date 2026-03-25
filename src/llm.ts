@@ -1,5 +1,6 @@
-// clooks LLM handler execution — Anthropic Messages API with batching
+// clooks LLM handler execution — Anthropic Messages API with batching, Claude Code CLI spawn
 
+import { spawn } from 'child_process';
 import { renderPromptTemplate } from './prefetch.js';
 import { DEFAULT_LLM_TIMEOUT, DEFAULT_LLM_MAX_TOKENS, LLM_PRICING } from './constants.js';
 import type { LLMHandlerConfig, HandlerResult, HookInput, PrefetchContext, TokenUsage } from './types.js';
@@ -48,9 +49,23 @@ export function calculateCost(model: string, usage: TokenUsage): number {
 }
 
 /**
- * Execute a single LLM handler: render prompt, call Messages API, return result.
+ * Execute a single LLM handler, dispatching to the appropriate backend.
  */
 export async function executeLLMHandler(
+  handler: LLMHandlerConfig,
+  input: HookInput,
+  context: PrefetchContext
+): Promise<HandlerResult> {
+  if (handler.backend === 'claude-code') {
+    return executeClaudeCodeHandler(handler, input, context);
+  }
+  return executeAPIHandler(handler, input, context);
+}
+
+/**
+ * Execute via Anthropic Messages API.
+ */
+async function executeAPIHandler(
   handler: LLMHandlerConfig,
   input: HookInput,
   context: PrefetchContext
@@ -63,8 +78,9 @@ export async function executeLLMHandler(
     const client = await getClient();
     const prompt = renderPromptTemplate(handler.prompt, input, context);
 
+    const model = handler.model!; // Guaranteed by manifest validation for api backend
     const apiCall = client.messages.create({
-      model: handler.model,
+      model,
       max_tokens: maxTokens,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -80,7 +96,7 @@ export async function executeLLMHandler(
       input_tokens: response.usage?.input_tokens ?? 0,
       output_tokens: response.usage?.output_tokens ?? 0,
     };
-    const cost_usd = calculateCost(handler.model, usage);
+    const cost_usd = calculateCost(model, usage);
 
     return {
       id: handler.id,
@@ -101,6 +117,88 @@ export async function executeLLMHandler(
 }
 
 /**
+ * Execute via Claude Code CLI spawn (`claude -p "prompt"`).
+ * Supports --agent and --model flags.
+ */
+function executeClaudeCodeHandler(
+  handler: LLMHandlerConfig,
+  input: HookInput,
+  context: PrefetchContext
+): Promise<HandlerResult> {
+  const start = performance.now();
+  const timeout = handler.timeout ?? DEFAULT_LLM_TIMEOUT;
+  const prompt = renderPromptTemplate(handler.prompt, input, context);
+
+  const args: string[] = ['-p', prompt, '--output-format', 'text'];
+  if (handler.llmAgent) {
+    args.push('--agent', handler.llmAgent);
+  }
+  if (handler.model) {
+    args.push('--model', handler.model);
+  }
+  if (handler.maxTokens) {
+    args.push('--max-tokens', String(handler.maxTokens));
+  }
+
+  return new Promise((resolve) => {
+    const child = spawn('claude', args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout,
+      env: { ...process.env },
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.stdin.end();
+
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+    }, timeout);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const duration_ms = performance.now() - start;
+
+      if (code !== 0) {
+        resolve({
+          id: handler.id,
+          ok: false,
+          error: `claude exit code ${code}${stderr ? ': ' + stderr.trim() : ''}`,
+          duration_ms,
+        });
+        return;
+      }
+
+      resolve({
+        id: handler.id,
+        ok: true,
+        output: { additionalContext: stdout.trim() },
+        duration_ms,
+      });
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({
+        id: handler.id,
+        ok: false,
+        error: `Claude Code spawn error: ${err.message}`,
+        duration_ms: performance.now() - start,
+      });
+    });
+  });
+}
+
+/**
  * Execute a batched group of LLM handlers: combine prompts into a single
  * multi-task API call, parse JSON response back into individual results.
  */
@@ -112,7 +210,7 @@ async function executeBatchGroup(
   const start = performance.now();
 
   // Use model from first handler; warn if others differ
-  const model = handlers[0].model;
+  const model = handlers[0].model!; // Guaranteed by manifest validation — batching only applies to api backend
   for (let i = 1; i < handlers.length; i++) {
     if (handlers[i].model !== model) {
       console.warn(
@@ -234,11 +332,14 @@ export async function executeLLMHandlersBatched(
   sessionId?: string
 ): Promise<HandlerResult[]> {
   // Group by batchGroup, scoped by sessionId to prevent cross-session batching
+  // claude-code handlers can't be batched — always run individually
   const grouped = new Map<string, LLMHandlerConfig[]>();
   const ungrouped: LLMHandlerConfig[] = [];
 
   for (const handler of handlers) {
-    if (handler.batchGroup) {
+    if (handler.backend === 'claude-code') {
+      ungrouped.push(handler);
+    } else if (handler.batchGroup) {
       // Scope the batch key by sessionId so different sessions never batch together
       const batchKey = sessionId
         ? `${handler.batchGroup}:${sessionId}`

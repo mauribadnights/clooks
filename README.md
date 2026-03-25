@@ -101,7 +101,7 @@ handlers:
       timeout: 3000
       enabled: true
 
-    # LLM handler -- calls Anthropic Messages API
+    # LLM handler -- calls Anthropic Messages API (default backend)
     - id: code-review
       type: llm
       model: claude-haiku-4-5
@@ -118,6 +118,14 @@ handlers:
       prompt: "Check for security issues in $TOOL_NAME: $ARGUMENTS"
       batchGroup: analysis
       agent: "builder"                  # only fire in builder agent sessions
+
+    # LLM handler -- spawns Claude Code CLI with an agent
+    - id: agent-review
+      type: llm
+      backend: claude-code              # spawn claude CLI instead of API call
+      llmAgent: security-reviewer       # --agent flag
+      prompt: "Audit this change: $TOOL_NAME $ARGUMENTS"
+      filter: "Bash|Write"
 
   UserPromptSubmit:
     # Inline handler -- imports a JS module in-process (no subprocess)
@@ -152,7 +160,7 @@ settings:
 
 **inline** -- imports a JS module and calls its default export. No subprocess overhead.
 
-**llm** -- calls Anthropic Messages API with `$VARIABLE` interpolation. Supports batching and cost tracking.
+**llm** -- AI-powered analysis with `$VARIABLE` interpolation. Two backends: `api` (default, Anthropic API with batching and cost tracking) and `claude-code` (CLI spawn with agent support).
 
 ## Handler Fields Reference
 
@@ -162,15 +170,17 @@ settings:
 | `type` | string | required | all | `script`, `inline`, or `llm` |
 | `command` | string | required | script | Shell command to execute |
 | `module` | string | required | inline | Path to JS module with default export |
-| `model` | string | required | llm | `claude-haiku-4-5`, `claude-sonnet-4-6`, or `claude-opus-4-6` |
+| `model` | string | required | llm | `claude-haiku-4-5`, `claude-sonnet-4-6`, or `claude-opus-4-6`. Required for `api` backend, optional for `claude-code`. |
 | `prompt` | string | required | llm | Prompt template with `$VARIABLE` interpolation |
+| `backend` | string | `api` | llm | `api` (Anthropic API) or `claude-code` (CLI spawn) |
+| `llmAgent` | string | -- | llm | Agent name for `claude-code` backend (`--agent` flag) |
 | `filter` | string | -- | all | Keyword filter (see Filtering) |
 | `project` | string | -- | all | Glob pattern matched against cwd |
 | `agent` | string | -- | all | Only fire when session agent matches |
 | `async` | boolean | `false` | all | Fire-and-forget, don't block response |
 | `depends` | string[] | -- | all | Handler IDs to wait for before executing |
 | `sessionIsolation` | boolean | `false` | all | Reset handler state on SessionStart |
-| `batchGroup` | string | -- | llm | Group ID for batching into one API call |
+| `batchGroup` | string | -- | llm | Group ID for batching into one API call (`api` backend only) |
 | `maxTokens` | number | `1024` | llm | Maximum output tokens |
 | `temperature` | number | `1.0` | llm | Sampling temperature |
 | `timeout` | number | `5000`/`30000` | all | Timeout in ms (5s default, 30s for llm) |
@@ -213,12 +223,16 @@ filter: "word1|!word2"     # run if word1 present AND word2 absent
 
 ## LLM Handlers
 
-**Setup:**
+LLM handlers support two backends: `api` (default, Anthropic Messages API) and `claude-code` (spawns `claude` CLI).
+
+**API backend setup:**
 
 ```bash
-npm install @anthropic-ai/sdk    # peer dependency, required only for llm handlers
+npm install @anthropic-ai/sdk    # peer dependency, required only for api backend
 export ANTHROPIC_API_KEY=sk-...  # or set in manifest: settings.anthropicApiKey
 ```
+
+**Claude Code backend** requires no API key or SDK — just the `claude` CLI installed and authenticated. Supports the `llmAgent` field for running prompts with a specific agent (`--agent`).
 
 **Prompt template variables:**
 
@@ -234,7 +248,7 @@ export ANTHROPIC_API_KEY=sk-...  # or set in manifest: settings.anthropicApiKey
 
 `$TRANSCRIPT`, `$GIT_STATUS`, and `$GIT_DIFF` require the corresponding key in `prefetch`. The others are always available from the hook input.
 
-**Batching:** Handlers sharing a `batchGroup` on the same event are combined into a single API call. Three Haiku calls become one, saving ~2/3 of input token cost and eliminating two round-trips. Batch groups are scoped per session to prevent cross-session contamination.
+**Batching (API backend only):** Handlers sharing a `batchGroup` on the same event are combined into a single API call. Three Haiku calls become one, saving ~2/3 of input token cost and eliminating two round-trips. Batch groups are scoped per session to prevent cross-session contamination. Claude Code backend handlers always execute individually.
 
 ## Async Handlers
 
@@ -408,7 +422,7 @@ src/
   manifest.ts     Manifest loading and validation
   metrics.ts      Metrics collection and aggregation
   tui.ts          Interactive terminal dashboard (ANSI-based)
-  llm.ts          Anthropic API integration and batching
+  llm.ts          LLM execution (Anthropic API + Claude Code CLI) and batching
   filter.ts       Keyword filter engine
   prefetch.ts     Pre-fetch context (transcript, git status/diff)
   plugin.ts       Plugin install/remove/list

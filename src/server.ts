@@ -295,7 +295,7 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
                 ts: new Date().toISOString(),
                 event,
                 handler: result.id,
-                model: llmConfig.model,
+                model: llmConfig.model!,
                 usage: result.usage,
                 cost_usd: result.cost_usd,
                 batched: !!llmConfig.batchGroup,
