@@ -33,6 +33,7 @@
   "files": [
     "dist",
     "hooks",
+    "agents",
     "README.md",
     "LICENSE"
   ],

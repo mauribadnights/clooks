@@ -14,6 +14,7 @@ import { syncSettings } from './sync.js';
 import { installService, uninstallService, isServiceInstalled, getServiceStatus } from './service.js';
 import { DEFAULT_PORT, CONFIG_DIR, PID_FILE, PLUGIN_MANIFEST_NAME } from './constants.js';
 import { launchDashboard } from './tui.js';
+import { installAgent } from './agent.js';
 import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 
@@ -196,6 +197,11 @@ program
       console.log(`  Backup: ~/.clooks/settings.backup.json`);
       console.log('\nRun "clooks start" to start the daemon.');
 
+      // Auto-install clooks agent
+      if (installAgent()) {
+        console.log('Agent updated: claude --agent clooks');
+      }
+
       // Auto-install system service
       if (!isServiceInstalled()) {
         try {
@@ -320,6 +326,11 @@ program
     console.log(`Auth token: ${token}`);
     console.log('Edit this file to configure your hook handlers.');
 
+    // Auto-install clooks agent
+    if (installAgent()) {
+      console.log('Agent updated: claude --agent clooks');
+    }
+
     // Auto-install system service
     if (!isServiceInstalled()) {
       try {
@@ -368,6 +379,11 @@ program
       console.log(`Updating: ${currentVersion} \u2192 ${latest}`);
       execSync('npm install -g @mauribadnights/clooks@latest', { stdio: 'inherit' });
       console.log(`Updated to ${latest}.`);
+
+      // Auto-install/update clooks agent
+      if (installAgent()) {
+        console.log('Agent updated: claude --agent clooks');
+      }
 
       // Restart daemon if running
       if (isDaemonRunning()) {

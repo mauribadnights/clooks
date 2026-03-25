@@ -10,6 +10,7 @@ import { loadManifest } from './manifest.js';
 import { isDaemonRunning } from './server.js';
 import { getServiceStatus } from './service.js';
 import { loadRegistry, validatePluginManifest } from './plugin.js';
+import { isAgentInstalled } from './agent.js';
 import { parse as parseYaml } from 'yaml';
 import type { DiagnosticResult, HandlerConfig, HookEvent, PluginManifest } from './types.js';
 
@@ -48,6 +49,9 @@ export async function runDoctor(): Promise<DiagnosticResult[]> {
 
   // 10. System service
   results.push(checkService());
+
+  // 11. clooks agent
+  results.push(checkAgent());
 
   return results;
 }
@@ -329,4 +333,11 @@ function checkService(): DiagnosticResult {
   if (status === 'running') return { check: 'System service', status: 'ok', message: 'Installed and running' };
   if (status === 'stopped') return { check: 'System service', status: 'warn', message: 'Installed but not running' };
   return { check: 'System service', status: 'warn', message: 'Not installed. Run "clooks service install" for auto-restart.' };
+}
+
+function checkAgent(): DiagnosticResult {
+  if (isAgentInstalled()) {
+    return { check: 'clooks agent', status: 'ok', message: 'Installed at ~/.claude/agents/clooks.md' };
+  }
+  return { check: 'clooks agent', status: 'warn', message: 'Not installed. Run "clooks init" to install.' };
 }

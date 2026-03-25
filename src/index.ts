@@ -18,6 +18,7 @@ export { installService, uninstallService, isServiceInstalled, getServiceStatus 
 export type { ServiceStatus } from './service.js';
 export type { SyncOptions } from './sync.js';
 export type { RotateTokenOptions } from './auth.js';
+export { installAgent, isAgentInstalled } from './agent.js';
 export { evaluateFilter } from './filter.js';
 export { executeLLMHandler, executeLLMHandlersBatched, calculateCost, resetClient } from './llm.js';
 export { prefetchContext, renderPromptTemplate } from './prefetch.js';
