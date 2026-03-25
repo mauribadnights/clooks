@@ -84,6 +84,32 @@ export function validateManifest(manifest: Manifest): void {
           throw new Error(`LLM handler "${handler.id}" model must be one of: ${validModels.join(', ')}`);
         }
       }
+
+      // Validate async field type
+      if ('async' in handler && typeof handler.async !== 'boolean') {
+        throw new Error(`Handler "${handler.id}" async field must be a boolean`);
+      }
+    }
+
+    // Warn about async handlers with dependency relationships
+    const eventHandlerIds = new Set((handlers as HandlerConfig[]).map(h => h.id));
+    const dependedUponIds = new Set<string>();
+    for (const h of handlers as HandlerConfig[]) {
+      if (h.depends) {
+        for (const dep of h.depends) {
+          if (eventHandlerIds.has(dep)) dependedUponIds.add(dep);
+        }
+      }
+    }
+    for (const h of handlers as HandlerConfig[]) {
+      if (h.async) {
+        if (dependedUponIds.has(h.id)) {
+          console.warn(`[clooks] Warning: async handler "${h.id}" has dependents — will run synchronously at runtime`);
+        }
+        if (h.depends?.some(d => eventHandlerIds.has(d))) {
+          console.warn(`[clooks] Warning: async handler "${h.id}" has dependencies — will run synchronously at runtime`);
+        }
+      }
     }
   }
 

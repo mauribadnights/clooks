@@ -64,7 +64,8 @@ export async function executeHandlers(
   _event: HookEvent,
   input: HookInput,
   handlers: HandlerConfig[],
-  context?: PrefetchContext
+  context?: PrefetchContext,
+  onAsyncResult?: (result: HandlerResult) => void
 ): Promise<HandlerResult[]> {
   // Pre-check: filter out disabled/auto-disabled/filtered handlers before dep resolution
   const eligible: HandlerConfig[] = [];
@@ -108,13 +109,72 @@ export async function executeHandlers(
     return skippedResults;
   }
 
+  // Separate async handlers from sync handlers
+  // Async handlers with dependents (or depended upon) are forced synchronous
+  const eligibleIds = new Set(eligible.map(h => h.id));
+  const dependedUpon = new Set<string>();
+  for (const h of eligible) {
+    if (h.depends) {
+      for (const dep of h.depends) {
+        if (eligibleIds.has(dep)) dependedUpon.add(dep);
+      }
+    }
+  }
+
+  const syncHandlers: HandlerConfig[] = [];
+  const asyncHandlers: HandlerConfig[] = [];
+
+  for (const handler of eligible) {
+    if (handler.async) {
+      const hasDependents = dependedUpon.has(handler.id);
+      const hasDeps = handler.depends?.some(d => eligibleIds.has(d)) ?? false;
+      if (hasDependents || hasDeps) {
+        // Async handler has dependency relationships — force synchronous
+        console.warn(`[clooks] Warning: async handler "${handler.id}" has dependency relationships, running synchronously`);
+        syncHandlers.push(handler);
+      } else {
+        asyncHandlers.push(handler);
+      }
+    } else {
+      syncHandlers.push(handler);
+    }
+  }
+
+  // Fire async handlers without awaiting
+  for (const handler of asyncHandlers) {
+    getState(handler.id).totalFires++;
+
+    if (handler.type === 'llm') {
+      executeLLMHandlersBatched([handler as LLMHandlerConfig], input, context ?? {}, input.session_id).then(results => {
+        for (const result of results) {
+          const state = getState(result.id);
+          if (result.ok) state.consecutiveFailures = 0;
+          else { state.consecutiveFailures++; state.totalErrors++; if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) state.disabled = true; }
+          onAsyncResult?.(result);
+        }
+      }).catch(() => {}); // never crash
+    } else {
+      executeOtherHandler(handler, input).then(result => {
+        const state = getState(result.id);
+        if (result.ok) state.consecutiveFailures = 0;
+        else { state.consecutiveFailures++; state.totalErrors++; if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) state.disabled = true; }
+        onAsyncResult?.(result);
+      }).catch(() => {}); // never crash
+    }
+  }
+
+  // Execute sync handlers with dependency resolution
+  if (syncHandlers.length === 0) {
+    return skippedResults;
+  }
+
   // Resolve execution order into waves
   let waves: HandlerConfig[][];
   try {
-    waves = resolveExecutionOrder(eligible);
+    waves = resolveExecutionOrder(syncHandlers);
   } catch {
     // If dep resolution fails, fall back to flat parallel execution
-    waves = [eligible];
+    waves = [syncHandlers];
   }
 
   const allResults: HandlerResult[] = [...skippedResults];

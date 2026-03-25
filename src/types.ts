@@ -48,6 +48,7 @@ export interface LLMHandlerConfig {
   enabled?: boolean;
   sessionIsolation?: boolean; // Reset handler state on SessionStart
   depends?: string[];  // handler IDs this handler depends on (executed after them)
+  async?: boolean;     // Fire-and-forget — don't await, don't include in response
 }
 
 /** Script handler config */
@@ -60,6 +61,7 @@ export interface ScriptHandlerConfig {
   enabled?: boolean;
   sessionIsolation?: boolean; // Reset handler state on SessionStart
   depends?: string[];  // handler IDs this handler depends on (executed after them)
+  async?: boolean;     // Fire-and-forget — don't await, don't include in response
 }
 
 /** Inline handler config */
@@ -72,6 +74,7 @@ export interface InlineHandlerConfig {
   enabled?: boolean;
   sessionIsolation?: boolean; // Reset handler state on SessionStart
   depends?: string[];  // handler IDs this handler depends on (executed after them)
+  async?: boolean;     // Fire-and-forget — don't await, don't include in response
 }
 
 /** Union of all handler configs */

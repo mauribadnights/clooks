@@ -6,7 +6,7 @@ import {
   getHandlerStates,
   resetSessionIsolatedHandlers,
 } from '../src/handlers.js';
-import type { HandlerConfig, HookInput } from '../src/types.js';
+import type { HandlerConfig, HandlerResult, HookInput } from '../src/types.js';
 
 const makeInput = (overrides?: Partial<HookInput>): HookInput => ({
   session_id: 'test-session',
@@ -212,6 +212,114 @@ describe('handlers', () => {
 
       resetHandlerStates();
       expect(getHandlerStates().size).toBe(0);
+    });
+  });
+
+  describe('async handlers', () => {
+    it('dispatches async handler but does not include it in results', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'async-bg', type: 'script', command: 'echo \'{"additionalContext":"bg"}\'', async: true },
+      ];
+
+      const results = await executeHandlers('PostToolUse', makeInput(), handlers);
+
+      // Async handler should NOT appear in the returned results
+      expect(results).toHaveLength(0);
+    });
+
+    it('sync handlers still block and return results', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'sync-one', type: 'script', command: 'echo \'{"additionalContext":"one"}\'' },
+      ];
+
+      const results = await executeHandlers('PostToolUse', makeInput(), handlers);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].ok).toBe(true);
+      expect(results[0].id).toBe('sync-one');
+    });
+
+    it('mixed sync/async: only sync results returned, async runs in background', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'sync-h', type: 'script', command: 'echo \'{"additionalContext":"sync"}\'' },
+        { id: 'async-h', type: 'script', command: 'echo \'{"additionalContext":"async"}\'', async: true },
+      ];
+
+      const results = await executeHandlers('PostToolUse', makeInput(), handlers);
+
+      // Only the sync handler should be in the results
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe('sync-h');
+    });
+
+    it('async handler with depends triggers synchronous fallback', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'dep-target', type: 'script', command: 'echo \'{"additionalContext":"target"}\'' },
+        { id: 'async-with-dep', type: 'script', command: 'echo \'{"additionalContext":"dependent"}\'', async: true, depends: ['dep-target'] },
+      ];
+
+      const results = await executeHandlers('PostToolUse', makeInput(), handlers);
+
+      // Both should be in results because the async handler was forced sync
+      expect(results).toHaveLength(2);
+      expect(results.find(r => r.id === 'async-with-dep')).toBeDefined();
+      expect(results.find(r => r.id === 'dep-target')).toBeDefined();
+    });
+
+    it('onAsyncResult callback fires when async handler completes', async () => {
+      const asyncResults: HandlerResult[] = [];
+      const handlers: HandlerConfig[] = [
+        { id: 'async-cb', type: 'script', command: 'echo \'{"additionalContext":"done"}\'', async: true },
+      ];
+
+      const results = await executeHandlers(
+        'PostToolUse',
+        makeInput(),
+        handlers,
+        undefined,
+        (result) => { asyncResults.push(result); }
+      );
+
+      // No sync results
+      expect(results).toHaveLength(0);
+
+      // Wait for the async handler to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      expect(asyncResults).toHaveLength(1);
+      expect(asyncResults[0].id).toBe('async-cb');
+      expect(asyncResults[0].ok).toBe(true);
+    });
+
+    it('async handler does NOT delay the response', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'sync-fast', type: 'script', command: 'echo ok' },
+        { id: 'async-slow', type: 'script', command: 'sleep 0.2 && echo ok', async: true },
+      ];
+
+      const start = performance.now();
+      const results = await executeHandlers('PostToolUse', makeInput(), handlers);
+      const elapsed = performance.now() - start;
+
+      // Should return quickly (well under 200ms for the async handler)
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe('sync-fast');
+      // The response should not have waited for the 200ms async handler
+      expect(elapsed).toBeLessThan(150);
+    });
+
+    it('async handler that is depended upon runs synchronously', async () => {
+      const handlers: HandlerConfig[] = [
+        { id: 'async-depended', type: 'script', command: 'echo \'{"additionalContext":"base"}\'', async: true },
+        { id: 'sync-dependent', type: 'script', command: 'echo \'{"additionalContext":"child"}\'', depends: ['async-depended'] },
+      ];
+
+      const results = await executeHandlers('PostToolUse', makeInput(), handlers);
+
+      // Both should be in results because the async handler was forced sync (it's depended upon)
+      expect(results).toHaveLength(2);
+      expect(results.find(r => r.id === 'async-depended')).toBeDefined();
+      expect(results.find(r => r.id === 'sync-dependent')).toBeDefined();
     });
   });
 

@@ -229,7 +229,14 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
         }
       }
 
-      log(`Hook: ${eventName} (${handlers.length} handler${handlers.length > 1 ? 's' : ''})`);
+      const allHandlerConfigs = handlers as HandlerConfig[];
+      const syncCount = allHandlerConfigs.filter(h => !h.async).length;
+      const asyncCount = allHandlerConfigs.filter(h => h.async).length;
+      if (asyncCount > 0) {
+        log(`Hook: ${eventName} (${syncCount} sync, ${asyncCount} async handler${syncCount + asyncCount > 1 ? 's' : ''})`);
+      } else {
+        log(`Hook: ${eventName} (${handlers.length} handler${handlers.length > 1 ? 's' : ''})`);
+      }
 
       try {
         // Pre-fetch shared context if configured
@@ -238,10 +245,8 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
           context = await prefetchContext(ctx.manifest.prefetch, input);
         }
 
-        const results = await executeHandlers(event, input, handlers as HandlerConfig[], context);
-
-        // Record metrics and costs
-        for (const result of results) {
+        // Callback for recording async handler metrics when they complete
+        const recordResult = (result: HandlerResult) => {
           metrics.record({
             ts: new Date().toISOString(),
             event,
@@ -255,9 +260,8 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
             session_id: input.session_id,
           });
 
-          // Track cost for LLM handlers
           if (result.usage && result.cost_usd !== undefined && result.cost_usd > 0) {
-            const handlerConfig = (handlers as HandlerConfig[]).find(h => h.id === result.id);
+            const handlerConfig = allHandlerConfigs.find(h => h.id === result.id);
             if (handlerConfig && handlerConfig.type === 'llm') {
               const llmConfig = handlerConfig as import('./types.js').LLMHandlerConfig;
               metrics.trackCost({
@@ -271,6 +275,13 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
               });
             }
           }
+        };
+
+        const results = await executeHandlers(event, input, allHandlerConfigs, context, recordResult);
+
+        // Record metrics and costs for sync results
+        for (const result of results) {
+          recordResult(result);
         }
 
         // Short-circuit: if PreToolUse had a deny, record it in the cache
