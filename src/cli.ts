@@ -22,7 +22,7 @@ const program = new Command();
 program
   .name('clooks')
   .description('Persistent hook runtime for Claude Code')
-  .version('0.3.4');
+  .version('0.4.0');
 
 // --- start ---
 program
