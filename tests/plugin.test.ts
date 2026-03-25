@@ -194,6 +194,31 @@ describe('installPlugin', () => {
     );
   });
 
+  it('plugin with extras field installs correctly and extras are preserved in registry', () => {
+    const manifest = makePluginManifest({
+      extras: {
+        skills: ['gsd:progress', 'gsd:plan-phase'],
+        agents: ['gsd-executor', 'gsd-planner'],
+        readme: 'README.md',
+      },
+    });
+    const sourceDir = writePluginDir(tmpDir, manifest);
+
+    const entry = installPlugin(sourceDir, pluginsDir, registryPath);
+    expect(entry.name).toBe('test-plugin');
+
+    // Load the installed plugin and verify extras are preserved
+    const loaded = loadPlugins(pluginsDir, registryPath);
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].manifest.extras).toBeDefined();
+    expect(loaded[0].manifest.extras!.skills).toEqual(['gsd:progress', 'gsd:plan-phase']);
+    expect(loaded[0].manifest.extras!.agents).toEqual(['gsd-executor', 'gsd-planner']);
+
+    // readme should be resolved to absolute path
+    const expectedReadme = join(pluginsDir, 'test-plugin', 'README.md');
+    expect(loaded[0].manifest.extras!.readme).toBe(expectedReadme);
+  });
+
   it('reinstalls if plugin already installed (overwrites)', () => {
     const manifest = makePluginManifest({ version: '1.0.0' });
     const sourceDir = writePluginDir(tmpDir, manifest);

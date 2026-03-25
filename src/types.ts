@@ -157,6 +157,14 @@ export interface DiagnosticResult {
   message: string;
 }
 
+/** Plugin extras metadata (freeform, extensible) */
+export interface PluginExtras {
+  skills?: string[];     // skill names the plugin provides
+  agents?: string[];     // agent names the plugin provides
+  readme?: string;       // path to plugin README (relative to plugin dir)
+  [key: string]: unknown; // extensible for future use
+}
+
 /** Plugin manifest (clooks-plugin.yaml) */
 export interface PluginManifest {
   name: string;
@@ -165,6 +173,7 @@ export interface PluginManifest {
   author?: string;
   handlers: Partial<Record<HookEvent, HandlerConfig[]>>;
   prefetch?: PrefetchKey[];
+  extras?: PluginExtras;
 }
 
 /** Installed plugin registry entry */

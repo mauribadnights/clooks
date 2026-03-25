@@ -2,7 +2,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, rmSync } from 'fs';
 import { join, resolve as resolvePath } from 'path';
-import { parse as parseYaml } from 'yaml';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { PLUGINS_DIR, PLUGIN_REGISTRY, PLUGIN_MANIFEST_NAME, HOOK_EVENTS } from './constants.js';
 import type {
   PluginManifest,
@@ -269,6 +269,13 @@ export function installPlugin(
   const installedRaw = readFileSync(installedManifestPath, 'utf-8');
   const resolved = installedRaw.replace(/\$PLUGIN_DIR/g, destPath);
   writeFileSync(installedManifestPath, resolved, 'utf-8');
+
+  // Resolve relative extras.readme to absolute path
+  const resolvedManifest = parseYaml(resolved) as PluginManifest;
+  if (resolvedManifest.extras?.readme && !resolvedManifest.extras.readme.startsWith('/')) {
+    resolvedManifest.extras.readme = join(destPath, resolvedManifest.extras.readme);
+    writeFileSync(installedManifestPath, stringifyYaml(resolvedManifest), 'utf-8');
+  }
 
   // Update registry
   const registry = loadRegistry(registryPath);

@@ -315,23 +315,28 @@ program
       return;
     }
 
-    // Table header
-    const cols = [
-      'Name'.padEnd(25),
-      'Version'.padEnd(12),
-      'Installed'.padEnd(22),
-    ];
-    console.log(cols.join('  '));
-    console.log('-'.repeat(cols.join('  ').length));
+    // Load full manifests to access extras and handler counts
+    const loaded = loadPlugins();
+    const manifestMap = new Map(loaded.map(l => [l.name, l.manifest]));
+
+    console.log('Installed Plugins:');
 
     for (const p of plugins) {
-      const installed = new Date(p.installedAt).toLocaleDateString('en-US', {
-        year: 'numeric', month: 'short', day: 'numeric',
-        hour: '2-digit', minute: '2-digit',
-      });
-      console.log(
-        `${p.name.padEnd(25)}  ${p.version.padEnd(12)}  ${installed}`
-      );
+      const manifest = manifestMap.get(p.name);
+      const handlerCount = manifest
+        ? Object.values(manifest.handlers).reduce((sum, arr) => sum + (arr?.length ?? 0), 0)
+        : 0;
+
+      console.log(`  ${p.name} v${p.version} (${handlerCount} handler${handlerCount !== 1 ? 's' : ''})`);
+
+      if (manifest?.extras) {
+        if (manifest.extras.skills && manifest.extras.skills.length > 0) {
+          console.log(`    Skills: ${manifest.extras.skills.join(', ')}`);
+        }
+        if (manifest.extras.agents && manifest.extras.agents.length > 0) {
+          console.log(`    Agents: ${manifest.extras.agents.join(', ')}`);
+        }
+      }
     }
   });
 
