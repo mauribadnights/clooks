@@ -23,6 +23,8 @@ export const LLM_PRICING: Record<string, { input: number; output: number }> = {
   'claude-opus-4-6':   { input: 15.00, output: 75.00 },
 };
 
+export const HOOKS_DIR = join(CONFIG_DIR, 'hooks');
+
 export const PLUGINS_DIR = join(CONFIG_DIR, 'plugins');
 export const PLUGIN_REGISTRY = join(PLUGINS_DIR, 'installed.json');
 export const PLUGIN_MANIFEST_NAME = 'clooks-plugin.yaml';

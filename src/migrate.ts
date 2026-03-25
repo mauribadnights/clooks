@@ -3,8 +3,9 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { CONFIG_DIR, SETTINGS_BACKUP, DEFAULT_PORT, HOOK_EVENTS, MANIFEST_PATH } from './constants.js';
+import { CONFIG_DIR, SETTINGS_BACKUP, DEFAULT_PORT, HOOK_EVENTS, HOOKS_DIR, MANIFEST_PATH } from './constants.js';
 import { loadManifest } from './manifest.js';
+import { installBuiltinHooks } from './builtin-hooks.js';
 import type { Manifest, HandlerConfig, HookEvent } from './types.js';
 import { stringify as stringifyYaml } from 'yaml';
 
@@ -136,6 +137,22 @@ export function migrate(options?: MigratePathOptions): { manifestPath: string; s
       };
     });
   }
+
+  // Install built-in hook scripts
+  installBuiltinHooks();
+
+  // Add update checker to SessionStart handlers
+  const checkUpdatePath = join(HOOKS_DIR, 'check-update.js');
+  if (!manifestHandlers['SessionStart']) {
+    manifestHandlers['SessionStart'] = [];
+  }
+  manifestHandlers['SessionStart'].unshift({
+    id: 'clooks-check-update',
+    type: 'script' as const,
+    command: `node ${checkUpdatePath}`,
+    timeout: 6000,
+    enabled: true,
+  });
 
   // Write manifest.yaml
   const manifest: Manifest = {

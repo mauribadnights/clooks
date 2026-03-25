@@ -1,9 +1,11 @@
 // clooks manifest parser (YAML hook definitions)
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { join } from 'path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { MANIFEST_PATH, CONFIG_DIR, HOOK_EVENTS } from './constants.js';
+import { MANIFEST_PATH, CONFIG_DIR, HOOKS_DIR, HOOK_EVENTS } from './constants.js';
 import { loadPlugins, mergeManifests } from './plugin.js';
+import { installBuiltinHooks } from './builtin-hooks.js';
 import type { Manifest, HandlerConfig, HookEvent } from './types.js';
 
 /**
@@ -139,8 +141,22 @@ export function createDefaultManifest(authToken?: string): string {
     settings.authToken = authToken;
   }
 
+  // Install built-in hook scripts to CONFIG_DIR/hooks/
+  installBuiltinHooks();
+
+  const checkUpdatePath = join(HOOKS_DIR, 'check-update.js');
+
   const example: Manifest = {
     handlers: {
+      SessionStart: [
+        {
+          id: 'clooks-check-update',
+          type: 'script',
+          command: `node ${checkUpdatePath}`,
+          timeout: 6000,
+          enabled: true,
+        },
+      ],
       PreToolUse: [
         {
           id: 'example-guard',

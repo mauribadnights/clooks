@@ -32,6 +32,7 @@
   },
   "files": [
     "dist",
+    "hooks",
     "README.md",
     "LICENSE"
   ],

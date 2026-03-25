@@ -256,6 +256,43 @@ program
     }
   });
 
+// --- update ---
+program
+  .command('update')
+  .description('Update clooks to the latest version')
+  .action(async () => {
+    console.log('Checking for updates...');
+
+    const currentVersion = program.version();
+
+    try {
+      const { execSync } = await import('child_process');
+      const latest = execSync('npm view @mauribadnights/clooks version', { encoding: 'utf-8' }).trim();
+
+      if (latest === currentVersion) {
+        console.log(`Already on latest version (${currentVersion}).`);
+        return;
+      }
+
+      console.log(`Updating: ${currentVersion} \u2192 ${latest}`);
+      execSync('npm install -g @mauribadnights/clooks@latest', { stdio: 'inherit' });
+      console.log(`Updated to ${latest}.`);
+
+      // Restart daemon if running
+      if (isDaemonRunning()) {
+        console.log('Restarting daemon...');
+        stopDaemon();
+        await new Promise(r => setTimeout(r, 1000));
+        startDaemonBackground();
+        await new Promise(r => setTimeout(r, 500));
+        console.log('Daemon restarted.');
+      }
+    } catch (err) {
+      console.error('Update failed:', err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
+  });
+
 // --- add (install plugin) ---
 program
   .command('add <path>')
