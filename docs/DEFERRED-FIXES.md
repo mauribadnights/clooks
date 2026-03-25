@@ -1,43 +1,35 @@
-# Deferred Fixes — To Be Addressed in v0.3.0
+# Deferred Fixes (Historical)
 
-These issues were identified in the v0.2.1 audit but are deferred because v0.3.0 (plugin ecosystem) will change the underlying architecture they depend on. Fixing them now would mean reworking them during v0.3.0.
+> **All issues in this document were resolved in v0.3.0. This file is kept for historical reference.**
 
-## Session Isolation + LLM Batching Violation
+These issues were identified in the v0.2.1 audit and deferred to v0.3.0.
 
-**Problem:** Two concurrent sessions with handlers sharing a `batchGroup` will batch together into one API call, violating session isolation guarantees.
+## Session Isolation + LLM Batching Violation -- RESOLVED
 
-**Why deferred:** v0.3.0 adds dependency resolution between handlers. How batch groups work across plugins (and across sessions) needs to be designed holistically — not patched onto the current system.
+**Problem:** Two concurrent sessions with handlers sharing a `batchGroup` would batch together into one API call, violating session isolation guarantees.
 
-**Fix direction:** Pass `session_id` into `executeLLMHandlersBatched()`. Batch groups should be scoped to `{batchGroup}:{session_id}`. The plugin spec should define whether a plugin's batch group is session-scoped or global.
+**Resolution:** Batch groups are now scoped to `{batchGroup}:{session_id}`. Session ID is passed into `executeLLMHandlersBatched()` and plugins can declare batch groups as session-scoped or global.
 
-## Auth Token Rotation
+## Auth Token Rotation -- RESOLVED
 
-**Problem:** Token is generated once at `clooks init`. No expiration, no revocation. If compromised, manual edit of manifest + settings.json + daemon restart required.
+**Problem:** Token was generated once at `clooks init` with no expiration or revocation mechanism.
 
-**Why deferred:** Plugin install/uninstall will need to manage auth for plugin-contributed hooks. Token lifecycle (generation, rotation, per-plugin tokens vs global token) should be designed alongside the plugin lifecycle.
+**Resolution:** `clooks rotate-token` generates a new token, updates manifest and settings.json, and hot-reloads the daemon without restart.
 
-**Fix direction:** `clooks rotate-token` command that generates a new token, updates manifest, rewrites settings.json headers, and hot-reloads the daemon. Plugins could optionally have per-plugin tokens scoped to their handlers.
+## Manifest Reload Doesn't Trigger Session Reset -- RESOLVED
 
-## Manifest Reload Doesn't Trigger Session Reset
+**Problem:** File watcher reloaded manifest but didn't reset session-isolated handler state.
 
-**Problem:** File watcher reloads manifest but doesn't call `resetSessionIsolatedHandlers()`. New config takes effect with stale handler state from the previous manifest version.
+**Resolution:** Manifest reload now diffs old vs new handlers. New handlers get fresh state, removed handlers get cleaned up, and changed handlers with `sessionIsolation: true` are reset.
 
-**Why deferred:** v0.3.0 changes manifest structure — plugins contribute handler entries, and the manifest becomes a composite of user config + installed plugins. The reload mechanism will be redesigned to handle plugin additions/removals, at which point handler state lifecycle gets a proper design.
+## Health Endpoint Auth -- RESOLVED
 
-**Fix direction:** Manifest reload should diff old vs new handlers. New handlers get fresh state. Removed handlers get their state cleaned up. Changed handlers with `sessionIsolation: true` get reset.
+**Problem:** `/health` bypassed auth, exposing operational details to unauthenticated clients.
 
-## Health Endpoint Auth
+**Resolution:** Split into `/health` (public, returns `{ status: "ok" }` only) and `/health/detail` (authenticated, returns uptime, handler count, plugin list).
 
-**Problem:** `/health` bypasses auth, exposing uptime, handler count, and port to unauthenticated clients on localhost.
+## Rate Limiting on Auth Failures -- RESOLVED
 
-**Why deferred:** Plugins may need the health endpoint for their own monitoring. The v0.3.0 plugin spec should define what monitoring data is public vs authenticated.
+**Problem:** Failed auth attempts were logged but not throttled.
 
-**Fix direction:** Split into `/health` (public, returns only `{ status: "ok" }`) and `/health/detail` (authenticated, returns uptime, handler count, plugin list). Or make it configurable in manifest settings.
-
-## Rate Limiting on Auth Failures
-
-**Problem:** Failed auth attempts are logged but not throttled. Brute force is impractical (32 hex chars) but there's no defense-in-depth.
-
-**Why deferred:** Not urgent given token entropy. When the plugin ecosystem adds more HTTP endpoints (plugin management, dashboard), rate limiting should be designed across all endpoints — not just auth.
-
-**Fix direction:** Simple in-memory rate limiter: after N failed auth attempts from the same source within T seconds, reject with 429. Reset on successful auth.
+**Resolution:** In-memory rate limiter rejects with 429 after repeated failed auth attempts within a time window. Resets on successful auth.

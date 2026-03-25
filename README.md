@@ -65,6 +65,11 @@ After `clooks migrate`, your `settings.json` is rewritten so that `SessionStart`
 | `clooks doctor` | Run diagnostic health checks |
 | `clooks init` | Create default config directory and example manifest |
 | `clooks ensure-running` | Start daemon if not already running (used by SessionStart hook) |
+| `clooks add <path>` | Install a plugin from a local directory |
+| `clooks remove <name>` | Uninstall a plugin and its contributed handlers |
+| `clooks plugins` | List installed plugins and their handlers |
+| `clooks rotate-token` | Generate a new auth token, update manifest + settings.json, hot-reload daemon |
+| `clooks costs` | Show LLM token usage and cost breakdown |
 
 ## Manifest Format
 
@@ -281,9 +286,75 @@ LLM Cost Summary
 - Batching savings are estimated based on shared input tokens
 - Cost data also appears in `clooks stats` when LLM handlers have been used
 
+## v0.3 Features
+
+### Plugin System
+
+Plugins let you package and share sets of handlers. A plugin is any directory with a `clooks-plugin.yaml` spec:
+
+```yaml
+# clooks-plugin.yaml
+name: my-security-suite
+version: 1.0.0
+description: Security guards for tool calls
+handlers:
+  PreToolUse:
+    - id: bash-guard
+      type: inline
+      module: ./handlers/bash-guard.js
+      timeout: 3000
+    - id: file-guard
+      type: inline
+      module: ./handlers/file-guard.js
+      timeout: 2000
+```
+
+Install, remove, and list plugins:
+
+```bash
+clooks add ./my-security-suite     # install from local path
+clooks remove my-security-suite    # uninstall
+clooks plugins                     # list installed plugins + handlers
+```
+
+Handler IDs are namespaced to the plugin (`my-security-suite:bash-guard`) to avoid collisions with user-defined handlers or other plugins.
+
+### Dependency Resolution
+
+Handlers can declare dependencies on other handlers using the `depends` field. clooks resolves dependencies into topological execution waves -- handlers in the same wave run in parallel, waves execute sequentially.
+
+```yaml
+handlers:
+  PreToolUse:
+    - id: context-loader
+      type: inline
+      module: ~/hooks/context.js
+
+    - id: security-check
+      type: llm
+      model: claude-haiku-4-5
+      prompt: "Check $TOOL_NAME for issues given context: $CONTEXT"
+      depends: [context-loader]    # waits for context-loader to finish first
+```
+
+In this example, `context-loader` runs in wave 1, and `security-check` runs in wave 2 after it completes. Handlers with no dependencies (or whose dependencies are already satisfied) run in parallel within the same wave.
+
+### Short-Circuit Chains
+
+When a `PreToolUse` handler returns a deny decision, clooks automatically skips the corresponding `PostToolUse` handlers for that tool call. This avoids wasted work (and wasted LLM calls) on tool invocations that were blocked.
+
+Deny results are cached with a 30-second TTL, so repeated calls to the same tool with the same arguments short-circuit without re-evaluating handlers.
+
+### Other v0.3 Improvements
+
+- **Auth token rotation:** `clooks rotate-token` generates a new token, updates manifest and settings.json, and hot-reloads the daemon -- no restart required.
+- **Health endpoint split:** `/health` is now public (returns `{ status: "ok" }` only). `/health/detail` requires auth and returns uptime, handler count, and plugin list.
+- **Rate limiting on auth failures:** In-memory rate limiter rejects with 429 after repeated failed auth attempts within a time window. Resets on successful auth.
+- **Session-scoped LLM batch groups:** Batch groups are now scoped to `{batchGroup}:{session_id}`, preventing cross-session batching violations.
+- **Manifest reload resets handler state:** Reloading the manifest now diffs old vs new handlers and resets session-isolated state for changed or new handlers.
+
 ## Roadmap
 
-- **v0.3:** Plugin ecosystem, dependency resolution between handlers
 - **v0.4:** Visual dashboard for hook management and metrics
 
 ## Contributing
