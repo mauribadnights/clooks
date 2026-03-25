@@ -1,9 +1,9 @@
 # clooks
 
-**Persistent hook runtime for Claude Code.** Eliminate cold starts. Get observability.
+Persistent hook runtime for Claude Code. Eliminate cold starts. Get observability.
 
-[![npm version](https://img.shields.io/npm/v/@mauribadnights/clooks.svg)](https://www.npmjs.com/package/@mauribadnights/clooks)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![npm](https://img.shields.io/npm/v/@mauribadnights/clooks)](https://www.npmjs.com/package/@mauribadnights/clooks)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## Performance
 
@@ -15,25 +15,15 @@
 
 > Benchmarked on Apple Silicon (M-series), Node v24.4.1. Run `npm run bench` to reproduce.
 
-## The Problem
-
-Claude Code spawns a fresh process for every hook invocation. Each Node.js cold start costs 30-40ms. Power users with multiple hooks accumulate 100+ process spawns per session -- that is 4-6 seconds of pure overhead, with zero visibility into what your hooks are doing or how they fail.
-
-## Quick Start
+## Installation
 
 ```bash
 npm install -g @mauribadnights/clooks
-
-# Option A: Migrate existing hooks automatically
-clooks migrate     # converts command hooks to HTTP hooks + manifest
-clooks start       # starts the daemon
-
-# Option B: Start fresh
-clooks init        # creates ~/.clooks/manifest.yaml
+clooks migrate    # migrates existing hooks, installs system service, installs clooks agent
 clooks start
 ```
 
-That is it. Claude Code will now POST to your daemon instead of spawning processes.
+`clooks migrate` converts your `settings.json` command hooks into HTTP hooks backed by the daemon, auto-installs a system service (launchd/systemd) for auto-start and crash recovery, and installs the `clooks` expert agent (`claude --agent clooks`). Starting fresh instead? Use `clooks init` to create a blank manifest.
 
 ## How It Works
 
@@ -48,139 +38,192 @@ Claude Code                          clooks daemon (localhost:7890)
     |<-------------- JSON responses ---------|
 ```
 
-One persistent process. Zero cold starts. Full observability.
+One persistent HTTP server replaces per-invocation process spawning. Claude Code POSTs hook events to the daemon, which dispatches to handlers defined in `~/.clooks/manifest.yaml`. Handlers that fail 3 times consecutively are auto-disabled.
 
-After `clooks migrate`, your `settings.json` is rewritten so that `SessionStart` runs a single command hook (`clooks ensure-running`) and all other hooks become HTTP POSTs. The daemon loads handlers from `~/.clooks/manifest.yaml` and dispatches them in parallel per event. Handlers that fail 3 times consecutively are auto-disabled to prevent cascading failures.
+## Quick Reference -- Commands
 
-## Commands
+**Daemon lifecycle:**
 
 | Command | Description |
 |---------|-------------|
-| `clooks start` | Start the daemon (background by default, `--foreground` for debug) |
+| `clooks start` | Start the daemon (`-f` foreground, `--no-watch` disable manifest watching) |
 | `clooks stop` | Stop the daemon |
-| `clooks status` | Show daemon status, uptime, and handler count |
-| `clooks stats` | Show hook execution metrics (fires, errors, latency) |
-| `clooks migrate` | Convert `settings.json` command hooks to HTTP hooks |
-| `clooks restore` | Restore original `settings.json` from backup |
+| `clooks status` | Show daemon status, uptime, handler count, service state |
+| `clooks ensure-running` | Start daemon if not running (used internally by SessionStart hook) |
+
+**Observability:**
+
+| Command | Description |
+|---------|-------------|
+| `clooks stats` | Interactive TUI for execution metrics (`-t` for plain text) |
+| `clooks costs` | LLM token usage and cost breakdown |
 | `clooks doctor` | Run diagnostic health checks |
+
+**Configuration:**
+
+| Command | Description |
+|---------|-------------|
+| `clooks migrate` | Convert `settings.json` command hooks to HTTP hooks, install service + agent |
+| `clooks restore` | Restore original `settings.json` from backup |
+| `clooks sync` | Sync `settings.json` with manifest (add missing HTTP hook entries) |
 | `clooks init` | Create default config directory and example manifest |
-| `clooks ensure-running` | Start daemon if not already running (used by SessionStart hook) |
+| `clooks update` | Update clooks to latest version and refresh agent |
+| `clooks rotate-token` | Generate new auth token, update manifest + settings.json, hot-reload daemon |
+
+**Plugins:**
+
+| Command | Description |
+|---------|-------------|
 | `clooks add <path>` | Install a plugin from a local directory |
 | `clooks remove <name>` | Uninstall a plugin and its contributed handlers |
 | `clooks plugins` | List installed plugins and their handlers |
-| `clooks rotate-token` | Generate a new auth token, update manifest + settings.json, hot-reload daemon |
-| `clooks costs` | Show LLM token usage and cost breakdown |
 
-## Manifest Format
+**System service:**
+
+| Command | Description |
+|---------|-------------|
+| `clooks service install` | Install as system service (auto-start on login, auto-restart on crash) |
+| `clooks service uninstall` | Remove system service |
+| `clooks service status` | Show service status |
+
+## Configuration -- Manifest
 
 Handlers are defined in `~/.clooks/manifest.yaml`:
 
 ```yaml
+# Pre-fetch shared context once per event, available as $VARIABLES in LLM prompts
+prefetch:
+  - transcript        # last 50KB of session transcript
+  - git_status        # git status --porcelain
+  - git_diff          # git diff --stat (max 20KB)
+
 handlers:
   PreToolUse:
+    # Script handler -- spawns a shell command
     - id: safety-guard
-      type: script                    # runs a shell command
+      type: script
       command: node ~/hooks/guard.js
+      filter: "Bash|Execute|!Read"      # OR logic, ! negates
+      project: "*/my-project/*"         # only fire in matching cwd
       timeout: 3000
       enabled: true
 
-    - id: context-injector
-      type: inline                    # imports a JS module directly (no subprocess)
-      module: ~/hooks/context.js
-      timeout: 2000
-
-  Stop:
-    - id: session-logger
-      type: script
-      command: ~/hooks/log-session.sh
-
-settings:
-  port: 7890
-  logLevel: info
-```
-
-**Handler types:**
-- `script` -- runs a shell command, pipes hook JSON to stdin, reads JSON from stdout.
-- `inline` -- imports a JS module and calls its default export. Faster; no subprocess overhead.
-- `llm` -- calls Anthropic Messages API. Supports prompt templates, batching, and cost tracking. *(v0.2+)*
-
-## Observability
-
-### Execution Metrics
-
-```
-$ clooks stats
-
-Event               Fires     Errors    Avg (ms)    Min (ms)    Max (ms)
-------------------------------------------------------------------------
-PreToolUse          47        0         1.2         0.8         3.1
-Stop                12        0         2.4         1.1         5.6
-UserPromptSubmit    12        1         1.8         0.9         4.2
-
-Total fires: 71 | Total errors: 1 | Spawns saved: ~71
-```
-
-### Diagnostics
-
-```
-$ clooks doctor
-
-[pass] Daemon is running (PID 44721, uptime 2h 13m)
-[pass] Port 7890 is responding
-[pass] Manifest loaded: 4 handlers across 3 events
-[pass] settings.json has HTTP hooks pointing to clooks
-[pass] No handlers in circuit-breaker state
-[warn] 1 handler error in last 24h (session-logger on Stop)
-```
-
-## Comparison
-
-| | Without clooks | With clooks |
-|---|---|---|
-| **Process model** | New process per hook invocation | One persistent HTTP server |
-| **Cold start overhead** | 30-40ms per invocation | 0ms (already running) |
-| **State management** | Stateless -- each invocation starts fresh | Persistent -- share state across invocations |
-| **Observability** | None | Metrics, stats, logs, doctor diagnostics |
-| **Error handling** | Silent failures | Auto-disable after 3 consecutive failures |
-
-## Configuration Reference
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| Port | `7890` | HTTP server port |
-| Config directory | `~/.clooks/` | Root configuration directory |
-| Manifest | `~/.clooks/manifest.yaml` | Handler definitions |
-| Metrics | `~/.clooks/metrics.jsonl` | Execution metrics log |
-| Daemon log | `~/.clooks/daemon.log` | Server output log |
-| PID file | `~/.clooks/daemon.pid` | Process ID file |
-
-## v0.2 Features
-
-### LLM Handlers
-
-Call the Anthropic Messages API directly from your manifest. Handlers with the same `batchGroup` are combined into a single API call, saving tokens and latency.
-
-```yaml
-handlers:
-  PreToolUse:
+    # LLM handler -- calls Anthropic Messages API
     - id: code-review
       type: llm
       model: claude-haiku-4-5
-      prompt: "Review this tool call for $TOOL_NAME with args: $ARGUMENTS"
-      batchGroup: analysis
-      timeout: 15000
+      prompt: "Review this $TOOL_NAME call: $ARGUMENTS"
+      batchGroup: analysis              # batched with other handlers in same group
+      maxTokens: 512
+      temperature: 0.5
+      depends: [safety-guard]           # waits for safety-guard to complete first
 
+    # Another LLM handler in the same batch group -- one API call for both
     - id: security-check
       type: llm
       model: claude-haiku-4-5
-      prompt: "Check for security issues in $TOOL_NAME call: $ARGUMENTS"
-      batchGroup: analysis    # batched with code-review into one API call
+      prompt: "Check for security issues in $TOOL_NAME: $ARGUMENTS"
+      batchGroup: analysis
+      agent: "builder"                  # only fire in builder agent sessions
+
+  UserPromptSubmit:
+    # Inline handler -- imports a JS module in-process (no subprocess)
+    - id: prompt-logger
+      type: inline
+      module: ~/.clooks/handlers/logger.js
+      async: true                       # fire-and-forget, doesn't block response
+      sessionIsolation: true            # reset state on SessionStart
+
+  Stop:
+    - id: session-summary
+      type: llm
+      model: claude-haiku-4-5
+      prompt: "Summarize this session:\n$TRANSCRIPT\n\nGit changes:\n$GIT_DIFF"
+
+settings:
+  port: 7890
+  logLevel: info                        # debug | info | warn | error
+  authToken: your-token-here            # auto-generated by migrate/init
+  # anthropicApiKey: sk-...             # or set ANTHROPIC_API_KEY env var
 ```
+
+## Handler Types
+
+| Type | Overhead | Language | Use case |
+|------|----------|----------|----------|
+| `script` | ~5-35ms (subprocess) | Any (shell command) | Existing scripts, non-JS tools |
+| `inline` | <1ms (in-process) | JavaScript/TypeScript | Performance-critical handlers |
+| `llm` | Network-bound | Prompt template | AI-powered analysis, review, summarization |
+
+**script** -- runs `sh -c "command"`, pipes hook JSON to stdin, reads JSON from stdout.
+
+**inline** -- imports a JS module and calls its default export. No subprocess overhead.
+
+**llm** -- calls Anthropic Messages API with `$VARIABLE` interpolation. Supports batching and cost tracking.
+
+## Handler Fields Reference
+
+| Field | Type | Default | Applies to | Description |
+|-------|------|---------|------------|-------------|
+| `id` | string | required | all | Unique handler identifier |
+| `type` | string | required | all | `script`, `inline`, or `llm` |
+| `command` | string | required | script | Shell command to execute |
+| `module` | string | required | inline | Path to JS module with default export |
+| `model` | string | required | llm | `claude-haiku-4-5`, `claude-sonnet-4-6`, or `claude-opus-4-6` |
+| `prompt` | string | required | llm | Prompt template with `$VARIABLE` interpolation |
+| `filter` | string | -- | all | Keyword filter (see Filtering) |
+| `project` | string | -- | all | Glob pattern matched against cwd |
+| `agent` | string | -- | all | Only fire when session agent matches |
+| `async` | boolean | `false` | all | Fire-and-forget, don't block response |
+| `depends` | string[] | -- | all | Handler IDs to wait for before executing |
+| `sessionIsolation` | boolean | `false` | all | Reset handler state on SessionStart |
+| `batchGroup` | string | -- | llm | Group ID for batching into one API call |
+| `maxTokens` | number | `1024` | llm | Maximum output tokens |
+| `temperature` | number | `1.0` | llm | Sampling temperature |
+| `timeout` | number | `5000`/`30000` | all | Timeout in ms (5s default, 30s for llm) |
+| `enabled` | boolean | `true` | all | Disable without removing |
+
+## Scoped Execution
+
+Handlers can be scoped to specific projects or agents:
+
+```yaml
+- id: driffusion-lint
+  type: script
+  command: node ~/hooks/lint.js
+  project: "*/Driffusion/*"     # only fires when cwd matches this glob
+
+- id: builder-guard
+  type: inline
+  module: ~/hooks/guard.js
+  agent: "builder"              # only fires in builder agent sessions
+```
+
+Both fields are optional. When omitted, the handler fires for all projects/agents.
+
+## Filtering
+
+The `filter` field skips handlers based on keywords matched against the full JSON-serialized hook input (case-insensitive):
+
+```
+filter: "word1|word2"       # run if input contains word1 OR word2
+filter: "!word"             # run unless input contains word
+filter: "word1|!word2"     # run if word1 present AND word2 absent
+```
+
+```yaml
+- id: bash-guard
+  type: script
+  command: node ~/hooks/guard.js
+  filter: "Bash|Execute|!Read"   # runs for Bash/Execute tools, never for Read
+```
+
+## LLM Handlers
 
 **Setup:**
 
 ```bash
-npm install @anthropic-ai/sdk    # peer dependency, only needed for llm handlers
+npm install @anthropic-ai/sdk    # peer dependency, required only for llm handlers
 export ANTHROPIC_API_KEY=sk-...  # or set in manifest: settings.anthropicApiKey
 ```
 
@@ -196,64 +239,40 @@ export ANTHROPIC_API_KEY=sk-...  # or set in manifest: settings.anthropicApiKey
 | `$PROMPT` | `hook_input.prompt` | User's prompt (UserPromptSubmit only) |
 | `$CWD` | `hook_input.cwd` | Current working directory |
 
-**LLM handler options:**
+`$TRANSCRIPT`, `$GIT_STATUS`, and `$GIT_DIFF` require the corresponding key in `prefetch`. The others are always available from the hook input.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `model` | string | required | `claude-haiku-4-5`, `claude-sonnet-4-6`, or `claude-opus-4-6` |
-| `prompt` | string | required | Prompt template with `$VARIABLE` interpolation |
-| `batchGroup` | string | optional | Group ID -- handlers with same group make one API call |
-| `maxTokens` | number | `1024` | Maximum output tokens |
-| `temperature` | number | `1.0` | Sampling temperature |
-| `filter` | string | optional | Keyword filter (see Filtering) |
-| `timeout` | number | `30000` | Timeout in milliseconds |
+**Batching:** Handlers sharing a `batchGroup` on the same event are combined into a single API call. Three Haiku calls become one, saving ~2/3 of input token cost and eliminating two round-trips. Batch groups are scoped per session to prevent cross-session contamination.
 
-**How batching works:**
+## Async Handlers
 
-When multiple LLM handlers share a `batchGroup` on the same event, clooks combines their prompts into a single multi-task API call and splits the structured response back to each handler. This means 3 Haiku calls become 1, saving ~2/3 of the input token cost and eliminating 2 round-trips.
-
-### Intelligent Filtering
-
-Skip handlers based on keywords. The `filter` field works on **all handler types** -- script, inline, and llm.
-
-**Filter syntax:**
-
-```
-filter: "word1|word2"      # run if input contains word1 OR word2
-filter: "!word"            # run unless input contains word
-filter: "word1|!word2"     # run if word1 present AND word2 absent
-```
-
-Matching is case-insensitive against the full JSON-serialized hook input.
+Handlers with `async: true` execute fire-and-forget -- they run in the background and do not block Claude's response. Use this for logging, analytics, or any work that does not need to inject context back into the session.
 
 ```yaml
-handlers:
-  PreToolUse:
-    - id: bash-guard
-      type: script
-      command: node ~/hooks/guard.js
-      filter: "Bash|Execute|!Read"   # runs for Bash/Execute, never for Read
+- id: session-tracker
+  type: inline
+  module: ~/hooks/tracker.js
+  async: true
 ```
 
-### Shared Context Pre-fetch
+## Dependency Resolution
 
-Fetch transcript, git status, or git diff once per hook event and share across all handlers. Avoids redundant I/O when multiple handlers need the same data. Use `$VARIABLE` interpolation in LLM prompts.
+Handlers can declare dependencies with `depends`. clooks resolves them into topological execution waves -- handlers in the same wave run in parallel, waves execute sequentially.
 
 ```yaml
-prefetch:
-  - transcript
-  - git_status
-  - git_diff
+- id: context-loader
+  type: inline
+  module: ~/hooks/context.js
 
-handlers:
-  Stop:
-    - id: session-summary
-      type: llm
-      model: claude-haiku-4-5
-      prompt: "Summarize this session:\n$TRANSCRIPT\n\nGit changes:\n$GIT_DIFF"
+- id: security-check
+  type: llm
+  model: claude-haiku-4-5
+  prompt: "Check $TOOL_NAME given context: $CONTEXT"
+  depends: [context-loader]    # runs in wave 2, after context-loader completes in wave 1
 ```
 
-**Available prefetch keys:**
+## Pre-fetch
+
+Fetch shared context once per hook event and make it available to all handlers via `$VARIABLE` interpolation in LLM prompts.
 
 | Key | Source | Max size | Description |
 |-----|--------|----------|-------------|
@@ -261,11 +280,38 @@ handlers:
 | `git_status` | `git status --porcelain` | unbounded | Working tree status |
 | `git_diff` | `git diff --stat` | 20KB | Changed files summary |
 
-Pre-fetched data is cached for the duration of a single event dispatch. Errors on individual keys are silently caught -- a failed `git_status` won't prevent `transcript` from loading.
+Pre-fetched data is cached for the duration of a single event dispatch. Errors on individual keys are silently caught -- a failed `git_status` does not prevent `transcript` from loading.
 
-### Cost Tracking
+## Observability
 
-Track LLM token usage and costs per handler and model.
+**Execution metrics** -- `clooks stats` launches an interactive TUI by default. Use `-t` for plain text (also auto-selected when piped):
+
+```
+$ clooks stats -t
+
+Event               Fires     Errors    Avg (ms)    Min (ms)    Max (ms)
+------------------------------------------------------------------------
+PreToolUse          47        0         1.2         0.8         3.1
+Stop                12        0         2.4         1.1         5.6
+UserPromptSubmit    12        1         1.8         0.9         4.2
+
+Total fires: 71 | Total errors: 1 | Spawns saved: ~71
+```
+
+**Diagnostics** -- `clooks doctor` runs health checks on daemon, port, manifest, settings, and handler state:
+
+```
+$ clooks doctor
+
+[pass] Daemon is running (PID 44721, uptime 2h 13m)
+[pass] Port 7890 is responding
+[pass] Manifest loaded: 4 handlers across 3 events
+[pass] settings.json has HTTP hooks pointing to clooks
+[pass] No handlers in circuit-breaker state
+[warn] 1 handler error in last 24h (session-logger on Stop)
+```
+
+**Cost tracking** -- `clooks costs` shows LLM token usage and spend per handler and model:
 
 ```
 $ clooks costs
@@ -281,35 +327,44 @@ LLM Cost Summary
     security-check         $0.0053 (12 calls, avg 178 tokens)
 ```
 
-- Costs are persisted to `~/.clooks/costs.jsonl`
-- Built-in pricing (per million tokens): Haiku ($0.80 / $4.00), Sonnet ($3.00 / $15.00), Opus ($15.00 / $75.00)
-- Batching savings are estimated based on shared input tokens
-- Cost data also appears in `clooks stats` when LLM handlers have been used
+Built-in pricing (per million tokens): Haiku ($0.80 / $4.00), Sonnet ($3.00 / $15.00), Opus ($15.00 / $75.00). Costs persist to `~/.clooks/costs.jsonl`.
 
-## v0.3 Features
+## System Service
 
-### Plugin System
+`clooks service install` creates a platform-native service (launchd on macOS, systemd on Linux) that starts the daemon on login and restarts it on crash. `clooks migrate` and `clooks init` install the service automatically. Use `clooks service status` to check and `clooks service uninstall` to remove.
 
-Plugins let you package and share sets of handlers. A plugin is any directory with a `clooks-plugin.yaml` spec:
+## Plugin Development
+
+Plugins package reusable sets of handlers. A plugin is any directory with a `clooks-plugin.yaml`:
 
 ```yaml
 # clooks-plugin.yaml
 name: my-security-suite
 version: 1.0.0
 description: Security guards for tool calls
+author: your-name
+
 handlers:
   PreToolUse:
     - id: bash-guard
       type: inline
-      module: ./handlers/bash-guard.js
+      module: $PLUGIN_DIR/handlers/bash-guard.js    # $PLUGIN_DIR resolves to plugin install path
       timeout: 3000
     - id: file-guard
       type: inline
-      module: ./handlers/file-guard.js
+      module: $PLUGIN_DIR/handlers/file-guard.js
       timeout: 2000
+
+prefetch:
+  - git_status
+
+extras:
+  skills: [security-audit]       # skill names this plugin provides
+  agents: [security-reviewer]    # agent names this plugin provides
+  readme: README.md              # path to plugin README (relative to plugin dir)
 ```
 
-Install, remove, and list plugins:
+**Installing and managing plugins:**
 
 ```bash
 clooks add ./my-security-suite     # install from local path
@@ -317,51 +372,35 @@ clooks remove my-security-suite    # uninstall
 clooks plugins                     # list installed plugins + handlers
 ```
 
-Handler IDs are namespaced to the plugin (`my-security-suite:bash-guard`) to avoid collisions with user-defined handlers or other plugins.
+Handler IDs are automatically namespaced to the plugin (`my-security-suite/bash-guard`) to avoid collisions with user-defined handlers or other plugins.
 
-### Dependency Resolution
+## Expert Agent
 
-Handlers can declare dependencies on other handlers using the `depends` field. clooks resolves dependencies into topological execution waves -- handlers in the same wave run in parallel, waves execute sequentially.
+clooks ships with an expert agent that understands the full architecture, configuration, and troubleshooting workflow. It is auto-installed and auto-updated by `clooks migrate`, `clooks init`, and `clooks update`. Invoke it with `claude --agent clooks`.
 
-```yaml
-handlers:
-  PreToolUse:
-    - id: context-loader
-      type: inline
-      module: ~/hooks/context.js
+## Short-Circuit Chains
 
-    - id: security-check
-      type: llm
-      model: claude-haiku-4-5
-      prompt: "Check $TOOL_NAME for issues given context: $CONTEXT"
-      depends: [context-loader]    # waits for context-loader to finish first
-```
+When a `PreToolUse` handler returns a deny decision, clooks automatically skips the corresponding `PostToolUse` handlers for that tool call. Deny results are cached with a 30-second TTL, so repeated calls to the same tool with the same arguments short-circuit without re-evaluating handlers.
 
-In this example, `context-loader` runs in wave 1, and `security-check` runs in wave 2 after it completes. Handlers with no dependencies (or whose dependencies are already satisfied) run in parallel within the same wave.
+## Configuration Reference
 
-### Short-Circuit Chains
-
-When a `PreToolUse` handler returns a deny decision, clooks automatically skips the corresponding `PostToolUse` handlers for that tool call. This avoids wasted work (and wasted LLM calls) on tool invocations that were blocked.
-
-Deny results are cached with a 30-second TTL, so repeated calls to the same tool with the same arguments short-circuit without re-evaluating handlers.
-
-### Other v0.3 Improvements
-
-- **Auth token rotation:** `clooks rotate-token` generates a new token, updates manifest and settings.json, and hot-reloads the daemon -- no restart required.
-- **Health endpoint split:** `/health` is now public (returns `{ status: "ok" }` only). `/health/detail` requires auth and returns uptime, handler count, and plugin list.
-- **Rate limiting on auth failures:** In-memory rate limiter rejects with 429 after repeated failed auth attempts within a time window. Resets on successful auth.
-- **Session-scoped LLM batch groups:** Batch groups are now scoped to `{batchGroup}:{session_id}`, preventing cross-session batching violations.
-- **Manifest reload resets handler state:** Reloading the manifest now diffs old vs new handlers and resets session-isolated state for changed or new handlers.
-
-## Roadmap
-
-- **v0.4:** Visual dashboard for hook management and metrics
+| Item | Path / Value |
+|------|-------------|
+| Port | `7890` (default) |
+| Config directory | `~/.clooks/` |
+| Manifest | `~/.clooks/manifest.yaml` |
+| Metrics | `~/.clooks/metrics.jsonl` |
+| Costs | `~/.clooks/costs.jsonl` |
+| Daemon log | `~/.clooks/daemon.log` |
+| PID file | `~/.clooks/daemon.pid` |
+| Plugins directory | `~/.clooks/plugins/` |
 
 ## Contributing
 
-Issues and pull requests are welcome. Run the test suite before submitting:
-
 ```bash
+git clone https://github.com/mauribadnights/clooks
+cd clooks
+npm install
 npm test
 npm run bench
 ```
