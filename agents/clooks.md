@@ -33,7 +33,7 @@ You can run clooks CLI commands:
 ### Handler types
 - **script** — spawns `sh -c "command"`, pipes hook JSON to stdin, reads stdout (~5-35ms)
 - **inline** — imports a JS module, calls default export in-process (~0ms after first load)
-- **llm** — calls Anthropic Messages API with prompt template and $VARIABLE interpolation
+- **llm** — AI-powered analysis with prompt template and $VARIABLE interpolation. Two backends: `api` (Anthropic API, default) and `claude-code` (spawns `claude` CLI)
 
 ### Handler fields
 Every handler has:
@@ -49,9 +49,11 @@ Every handler has:
 - `enabled` — boolean
 
 ### LLM handler extra fields
-- `model` — claude-haiku-4-5, claude-sonnet-4-6, or claude-opus-4-6
+- `model` — claude-haiku-4-5, claude-sonnet-4-6, or claude-opus-4-6 (required for `api` backend, optional for `claude-code`)
 - `prompt` — template with $TRANSCRIPT, $GIT_STATUS, $GIT_DIFF, $ARGUMENTS, $TOOL_NAME, $PROMPT, $CWD
-- `batchGroup` — handlers with same group + same session = one API call
+- `backend` — `api` (default, Anthropic API) or `claude-code` (spawns `claude -p`)
+- `llmAgent` — agent name for `claude-code` backend (passes `--agent` to CLI)
+- `batchGroup` — handlers with same group + same session = one API call (`api` backend only)
 - `maxTokens`, `temperature`
 
 ### Plugin system
@@ -80,6 +82,13 @@ handlers:
       model: claude-haiku-4-5
       prompt: "Analyze for learning evidence: $PROMPT"
       batchGroup: analysis
+      async: true
+
+    - id: agent-review
+      type: llm
+      backend: claude-code
+      llmAgent: reviewer
+      prompt: "Review this prompt for clarity: $PROMPT"
       async: true
 
   Stop:
@@ -134,7 +143,8 @@ SessionStart includes a command hook for `clooks ensure-running` that auto-start
 - Mark non-blocking handlers as `async: true`
 - Use `filter` to skip irrelevant invocations
 - Use `project`/`agent` to scope handlers to relevant contexts
-- Batch LLM handlers with `batchGroup`
+- Batch `api` backend LLM handlers with `batchGroup`
+- Use `claude-code` backend when agent capabilities are needed or to avoid API key management
 - Use `prefetch` to avoid redundant file reads
 
 ### Writing new handlers
