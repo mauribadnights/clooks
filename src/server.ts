@@ -97,7 +97,12 @@ function readBody(req: IncomingMessage): Promise<string> {
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   const body = JSON.stringify(data);
-  res.socket?.on('error', () => {}); // suppress EPIPE if client disconnected early
+  // Guard against EPIPE: add listener only once per socket (keep-alive sockets are reused
+  // across requests — adding a listener per-request accumulates them and triggers
+  // MaxListenersExceededWarning after ~10 requests on the same connection).
+  if (res.socket && res.socket.listenerCount('error') === 0) {
+    res.socket.on('error', () => {}); // suppress EPIPE if client disconnected
+  }
   try {
     res.writeHead(status, {
       'Content-Type': 'application/json',
@@ -184,14 +189,7 @@ export function createServer(manifest: Manifest, metrics: MetricsCollector): Ser
 
       // Rate limiting: check if this source has too many auth failures
       if (!rateLimiter.check(source)) {
-        const retryAfter = rateLimiter.retryAfter(source);
-        const body = JSON.stringify({ error: 'Too many auth failures' });
-        res.writeHead(429, {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          'Retry-After': String(retryAfter),
-        });
-        res.end(body);
+        sendJson(res, 429, { error: 'Too many auth failures' });
         return;
       }
 
@@ -358,6 +356,14 @@ export function startDaemon(manifest: Manifest, metrics: MetricsCollector, optio
   return new Promise((resolve, reject) => {
     const ctx = createServer(manifest, metrics);
     const port = manifest.settings?.port ?? DEFAULT_PORT;
+
+    // Catch EPIPE at connection birth — handles the window between request arrival
+    // and the first sendJson call (e.g., during slow async handler execution).
+    // Without this, an EPIPE that arrives before sendJson's per-response listener
+    // is attached becomes an unhandled error event and crashes the process.
+    ctx.server.on('connection', (socket) => {
+      socket.on('error', () => {}); // no-op: client disconnected mid-flight
+    });
 
     ctx.server.on('error', async (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
