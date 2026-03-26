@@ -53,7 +53,7 @@ docs/
 
 - [Manifest](guides/manifest.md) -- manifest.yaml structure and fields
 - [Handlers](guides/handlers.md) -- script, inline, and LLM handler types
-- [LLM Handlers](guides/llm-handlers.md) -- prompt templates, batching, cost tracking
+- [LLM Handlers](guides/llm-handlers.md) -- prompt templates, batching, cost tracking, Claude Code CLI backend
 - [Filtering](guides/filtering.md) -- keyword-based handler filtering
 - [Dependencies](guides/dependencies.md) -- topological execution waves
 - [Async Handlers](guides/async-handlers.md) -- fire-and-forget execution

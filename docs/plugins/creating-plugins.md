@@ -71,7 +71,7 @@ Use `$PLUGIN_DIR` in `command` and `module` paths. When the plugin is installed,
 
 - `description` (string) — Shown in `clooks plugins` output
 - `author` (string) — Plugin author
-- `handlers` — Same format as user manifest handlers (all 3 types supported)
+- `handlers` — Same format as user manifest handlers (all 3 types supported, including both `api` and `claude-code` LLM backends)
 - `prefetch` — Keys to pre-fetch (merged with user manifest)
 - `extras` — Freeform metadata:
   - `skills` (string[]) — Skill names the plugin provides

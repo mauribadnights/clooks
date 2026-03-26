@@ -68,7 +68,7 @@ This launches an interactive TUI showing execution counts, latency, and errors p
 ## What to try next
 
 - Add a `filter` to scope handlers to specific tools
-- Try an `llm` handler for AI-powered review
+- Try an `llm` handler for AI-powered review (use `backend: claude-code` to skip API key setup)
 - Run `clooks migrate` to convert existing command hooks
 
 ---
