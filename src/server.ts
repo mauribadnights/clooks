@@ -97,11 +97,14 @@ function readBody(req: IncomingMessage): Promise<string> {
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   const body = JSON.stringify(data);
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(body),
-  });
-  res.end(body);
+  res.socket?.on('error', () => {}); // suppress EPIPE if client disconnected early
+  try {
+    res.writeHead(status, {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(body),
+    });
+    res.end(body);
+  } catch (_) {}
 }
 
 export interface ServerContext {
